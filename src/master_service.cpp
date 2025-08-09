@@ -22,7 +22,7 @@ ErrorCode MasterService::initialize() {
     if (!config_.etcd_endpoints.empty()) {
         auto err = setup_etcd_integration();
         if (err != ErrorCode::OK) {
-            LOG(ERROR) << "Failed to setup etcd integration: " << toString(err);
+            LOG(ERROR) << "Failed to setup etcd integration: " << error::to_string(err);
             return err;
         }
     } else {
@@ -109,7 +109,7 @@ Result<PingResponse> MasterService::ping_client(const UUID& client_id) {
     auto it = clients_.find(client_id);
     if (it == clients_.end()) {
         LOG(WARNING) << "Ping from unknown client: " << client_id;
-        return ErrorCode::INVALID_PARAMS;
+        return ErrorCode::INVALID_PARAMETERS;
     }
     
     it->second.last_ping = std::chrono::steady_clock::now();
@@ -127,7 +127,7 @@ ErrorCode MasterService::unregister_client(const UUID& client_id) {
     auto it = clients_.find(client_id);
     if (it == clients_.end()) {
         LOG(WARNING) << "Attempt to unregister unknown client: " << client_id;
-        return ErrorCode::INVALID_PARAMS;
+        return ErrorCode::INVALID_PARAMETERS;
     }
     
     LOG(INFO) << "Unregistering client: " << client_id << " (" << it->second.node_id << ")";
@@ -164,7 +164,7 @@ ErrorCode MasterService::register_segment(const Segment& segment, const UUID& cl
     auto client_it = clients_.find(client_id);
     if (client_it == clients_.end()) {
         LOG(ERROR) << "Attempt to register segment from unknown client: " << client_id;
-        return ErrorCode::INVALID_PARAMS;
+        return ErrorCode::INVALID_PARAMETERS;
     }
     
     // Check if segment already exists
@@ -231,14 +231,13 @@ Result<bool> MasterService::object_exists(const ObjectKey& key) {
     bool exists = (it != objects_.end()) && !it->second.is_expired();
     
     if (exists) {
-        // Touch the object to update last access time
         const_cast<ObjectInfo&>(it->second).touch();
     }
     
     return exists;
 }
 
-Result<std::vector<ReplicaDescriptor>> MasterService::get_replicas(const ObjectKey& key) {
+Result<std::vector<WorkerPlacement>> MasterService::get_workers(const ObjectKey& key) {
     std::shared_lock<std::shared_mutex> lock(objects_mutex_);
     
     auto it = objects_.find(key);
@@ -246,15 +245,13 @@ Result<std::vector<ReplicaDescriptor>> MasterService::get_replicas(const ObjectK
         return ErrorCode::OBJECT_NOT_FOUND;
     }
     
-    // Touch the object
     const_cast<ObjectInfo&>(it->second).touch();
-    
-    return it->second.replicas;
+    return it->second.workers;
 }
 
-Result<std::vector<ReplicaDescriptor>> MasterService::put_start(const ObjectKey& key, 
-                                                                size_t data_size, 
-                                                                const ReplicaConfig& config) {
+Result<std::vector<WorkerPlacement>> MasterService::put_start(const ObjectKey& key, 
+                                                              size_t data_size, 
+                                                              const WorkerConfig& config) {
     std::unique_lock<std::shared_mutex> lock(objects_mutex_);
     
     // Check if object already exists
@@ -263,8 +260,8 @@ Result<std::vector<ReplicaDescriptor>> MasterService::put_start(const ObjectKey&
         return ErrorCode::OBJECT_ALREADY_EXISTS;
     }
     
-    std::vector<ReplicaDescriptor> replicas;
-    auto err = allocate_replicas(key, data_size, config, replicas);
+    std::vector<WorkerPlacement> workers;
+    auto err = allocate_workers(key, data_size, config, workers);
     if (err != ErrorCode::OK) {
         return err;
     }
@@ -272,7 +269,7 @@ Result<std::vector<ReplicaDescriptor>> MasterService::put_start(const ObjectKey&
     // Create object info
     ObjectInfo object_info;
     object_info.key = key;
-    object_info.replicas = replicas;
+    object_info.workers = workers;
     object_info.created_at = std::chrono::steady_clock::now();
     object_info.last_accessed = object_info.created_at;
     object_info.soft_pinned = config.enable_soft_pin;
@@ -282,7 +279,7 @@ Result<std::vector<ReplicaDescriptor>> MasterService::put_start(const ObjectKey&
     
     LOG(INFO) << "Started put operation for key: " << key << " (size: " << data_size << ")";
     
-    return replicas;
+    return workers;
 }
 
 ErrorCode MasterService::put_complete(const ObjectKey& key) {
@@ -293,9 +290,9 @@ ErrorCode MasterService::put_complete(const ObjectKey& key) {
         return ErrorCode::OBJECT_NOT_FOUND;
     }
     
-    // Mark all replicas as complete
-    for (auto& replica : it->second.replicas) {
-        replica.status = ReplicaStatus::COMPLETE;
+    // Mark all workers as complete
+    for (auto& w : it->second.workers) {
+        w.status = WorkerStatus::COMPLETE;
     }
     
     LOG(INFO) << "Completed put operation for key: " << key;
@@ -352,29 +349,29 @@ std::vector<Result<bool>> MasterService::batch_object_exists(const std::vector<O
     return results;
 }
 
-std::vector<Result<std::vector<ReplicaDescriptor>>> MasterService::batch_get_replicas(const std::vector<ObjectKey>& keys) {
-    std::vector<Result<std::vector<ReplicaDescriptor>>> results;
+std::vector<Result<std::vector<WorkerPlacement>>> MasterService::batch_get_workers(const std::vector<ObjectKey>& keys) {
+    std::vector<Result<std::vector<WorkerPlacement>>> results;
     results.reserve(keys.size());
     
     for (const auto& key : keys) {
-        results.push_back(get_replicas(key));
+        results.push_back(get_workers(key));
     }
     
     return results;
 }
 
-std::vector<Result<std::vector<ReplicaDescriptor>>> MasterService::batch_put_start(
+std::vector<Result<std::vector<WorkerPlacement>>> MasterService::batch_put_start(
     const std::vector<ObjectKey>& keys,
     const std::vector<size_t>& data_sizes,
-    const ReplicaConfig& config) {
+    const WorkerConfig& config) {
     
     if (keys.size() != data_sizes.size()) {
         // Return error for all operations
-        std::vector<Result<std::vector<ReplicaDescriptor>>> results(keys.size(), ErrorCode::INVALID_PARAMS);
+        std::vector<Result<std::vector<WorkerPlacement>>> results(keys.size(), ErrorCode::INVALID_PARAMETERS);
         return results;
     }
     
-    std::vector<Result<std::vector<ReplicaDescriptor>>> results;
+    std::vector<Result<std::vector<WorkerPlacement>>> results;
     results.reserve(keys.size());
     
     for (size_t i = 0; i < keys.size(); ++i) {
@@ -456,10 +453,10 @@ ErrorCode MasterService::setup_etcd_integration() {
         return ErrorCode::OK;  // No etcd configured
     }
     
-    etcd_ = std::make_unique<EtcdHelper>(config_.etcd_endpoints);
+    etcd_ = std::make_unique<EtcdService>(config_.etcd_endpoints);
     auto err = etcd_->connect();
     if (err != ErrorCode::OK) {
-        LOG(ERROR) << "Failed to connect to etcd: " << toString(err);
+        LOG(ERROR) << "Failed to connect to etcd: " << error::to_string(err);
         return err;
     }
     
@@ -468,7 +465,7 @@ ErrorCode MasterService::setup_etcd_integration() {
     err = etcd_->register_service("blackbird-master", master_id, config_.listen_address, 
                                  config_.client_ttl_sec, master_lease_id_);
     if (err != ErrorCode::OK) {
-        LOG(ERROR) << "Failed to register master service with etcd: " << toString(err);
+        LOG(ERROR) << "Failed to register master service with etcd: " << error::to_string(err);
         return err;
     }
     
@@ -534,7 +531,7 @@ void MasterService::run_etcd_keepalive() {
         if (etcd_ && master_lease_id_ != 0) {
             auto err = etcd_->keep_alive(master_lease_id_);
             if (err != ErrorCode::OK) {
-                LOG(WARNING) << "Failed to keep alive etcd lease: " << toString(err);
+                LOG(WARNING) << "Failed to keep alive etcd lease: " << error::to_string(err);
             }
         }
     }
@@ -542,47 +539,43 @@ void MasterService::run_etcd_keepalive() {
     LOG(INFO) << "Etcd keepalive thread stopped";
 }
 
-ErrorCode MasterService::allocate_replicas(const ObjectKey& key, size_t data_size, 
-                                          const ReplicaConfig& config,
-                                          std::vector<ReplicaDescriptor>& replicas) {
-    // Simple stub implementation - just create mock replicas
-    replicas.clear();
-    replicas.reserve(config.replica_count);
+ErrorCode MasterService::allocate_workers(const ObjectKey& key, size_t data_size, 
+                                          const WorkerConfig& config,
+                                          std::vector<WorkerPlacement>& workers) {
+    workers.clear();
+    workers.reserve(config.worker_count);
     
     std::shared_lock<std::shared_mutex> segments_lock(segments_mutex_);
     
     if (segments_.empty()) {
-        LOG(ERROR) << "No segments available for replica allocation";
+        LOG(ERROR) << "No segments available for worker allocation";
         return ErrorCode::SEGMENT_NOT_FOUND;
     }
     
-    // For now, just create mock memory replicas
     size_t segment_idx = 0;
-    for (size_t i = 0; i < config.replica_count; ++i) {
-        ReplicaDescriptor replica;
-        replica.status = ReplicaStatus::ALLOCATED;
+    for (size_t i = 0; i < config.worker_count; ++i) {
+        WorkerPlacement placement;
+        placement.status = WorkerStatus::ALLOCATED;
         
-        // Find a segment (simple round-robin for now)
         auto segment_it = segments_.begin();
         std::advance(segment_it, segment_idx % segments_.size());
-        replica.node_id = segment_it->second.node_id;
+        placement.node_id = segment_it->second.node_id;
         
-        // Create memory descriptor
-        MemoryDescriptor mem_desc;
-        UcxBufferDescriptor buffer_desc;
-        buffer_desc.worker_address = segment_it->second.ucx_address;
-        buffer_desc.remote_key = 0;  // Placeholder
-        buffer_desc.remote_addr = segment_it->second.base_addr;  // Placeholder
-        buffer_desc.size = data_size;
+        MemoryPlacement mem;
+        UcxRegion region;
+        region.worker_address = segment_it->second.ucx_address;
+        region.remote_key = 0;
+        region.remote_addr = segment_it->second.base_addr;
+        region.size = data_size;
+        mem.kind = MemoryKind::CPU_DRAM;
+        mem.regions.push_back(region);
+        placement.storage = mem;
         
-        mem_desc.buffers.push_back(buffer_desc);
-        replica.storage = mem_desc;
-        
-        replicas.push_back(replica);
+        workers.push_back(placement);
         segment_idx++;
     }
     
-    LOG(INFO) << "Allocated " << replicas.size() << " replicas for key: " << key;
+    LOG(INFO) << "Allocated " << workers.size() << " workers for key: " << key;
     return ErrorCode::OK;
 }
 
@@ -605,7 +598,6 @@ void MasterService::cleanup_stale_clients() {
 }
 
 void MasterService::evict_objects_if_needed() {
-    // Check if we need to evict based on high watermark
     auto stats_result = get_cluster_stats();
     if (!is_ok(stats_result)) {
         return;
@@ -619,7 +611,6 @@ void MasterService::evict_objects_if_needed() {
     LOG(INFO) << "High watermark reached (" << (stats.utilization * 100.0) 
               << "%), starting eviction process";
     
-    // Simple LRU eviction
     std::unique_lock<std::shared_mutex> lock(objects_mutex_);
     
     std::vector<std::pair<std::chrono::steady_clock::time_point, ObjectKey>> lru_objects;
@@ -629,10 +620,8 @@ void MasterService::evict_objects_if_needed() {
         }
     }
     
-    // Sort by last access time (oldest first)
     std::sort(lru_objects.begin(), lru_objects.end());
     
-    // Evict oldest objects
     size_t target_evictions = static_cast<size_t>(objects_.size() * config_.eviction_ratio);
     size_t evicted = 0;
     

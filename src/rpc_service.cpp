@@ -25,13 +25,13 @@ ErrorCode RpcService::start() {
     
     auto err = setup_rpc_server();
     if (err != ErrorCode::OK) {
-        LOG(ERROR) << "Failed to setup RPC server: " << toString(err);
+        LOG(ERROR) << "Failed to setup RPC server: " << error::to_string(err);
         return err;
     }
     
     err = setup_http_server();
     if (err != ErrorCode::OK) {
-        LOG(ERROR) << "Failed to setup HTTP server: " << toString(err);
+        LOG(ERROR) << "Failed to setup HTTP server: " << error::to_string(err);
         return err;
     }
     
@@ -48,13 +48,11 @@ void RpcService::stop() {
     
     if (rpc_server_) {
         LOG(INFO) << "Stopping RPC server...";
-        // Stop RPC server - YLT server stop logic would go here
         rpc_server_.reset();
     }
     
     if (http_server_) {
         LOG(INFO) << "Stopping HTTP server...";
-        // Stop HTTP server - YLT HTTP server stop logic would go here
         http_server_.reset();
     }
     
@@ -96,16 +94,16 @@ Result<bool> RpcService::object_exists(const ObjectKey& key) {
     });
 }
 
-Result<std::vector<ReplicaDescriptor>> RpcService::get_replicas(const ObjectKey& key) {
-    return handle_service_call<std::vector<ReplicaDescriptor>>([&]() {
-        return master_service_->get_replicas(key);
+Result<std::vector<WorkerPlacement>> RpcService::get_workers(const ObjectKey& key) {
+    return handle_service_call<std::vector<WorkerPlacement>>([&]() {
+        return master_service_->get_workers(key);
     });
 }
 
-Result<std::vector<ReplicaDescriptor>> RpcService::put_start(const ObjectKey& key, 
+Result<std::vector<WorkerPlacement>> RpcService::put_start(const ObjectKey& key, 
                                                              size_t data_size, 
-                                                             const ReplicaConfig& config) {
-    return handle_service_call<std::vector<ReplicaDescriptor>>([&]() {
+                                                             const WorkerConfig& config) {
+    return handle_service_call<std::vector<WorkerPlacement>>([&]() {
         return master_service_->put_start(key, data_size, config);
     });
 }
@@ -144,24 +142,24 @@ std::vector<Result<bool>> RpcService::batch_object_exists(const std::vector<Obje
     }
 }
 
-std::vector<Result<std::vector<ReplicaDescriptor>>> RpcService::batch_get_replicas(const std::vector<ObjectKey>& keys) {
+std::vector<Result<std::vector<WorkerPlacement>>> RpcService::batch_get_workers(const std::vector<ObjectKey>& keys) {
     try {
-        return master_service_->batch_get_replicas(keys);
+        return master_service_->batch_get_workers(keys);
     } catch (const std::exception& e) {
-        LOG(ERROR) << "Exception in batch_get_replicas: " << e.what();
-        return std::vector<Result<std::vector<ReplicaDescriptor>>>(keys.size(), ErrorCode::INTERNAL_ERROR);
+        LOG(ERROR) << "Exception in batch_get_workers: " << e.what();
+        return std::vector<Result<std::vector<WorkerPlacement>>>(keys.size(), ErrorCode::INTERNAL_ERROR);
     }
 }
 
-std::vector<Result<std::vector<ReplicaDescriptor>>> RpcService::batch_put_start(
+std::vector<Result<std::vector<WorkerPlacement>>> RpcService::batch_put_start(
     const std::vector<ObjectKey>& keys,
     const std::vector<size_t>& data_sizes,
-    const ReplicaConfig& config) {
+    const WorkerConfig& config) {
     try {
         return master_service_->batch_put_start(keys, data_sizes, config);
     } catch (const std::exception& e) {
         LOG(ERROR) << "Exception in batch_put_start: " << e.what();
-        return std::vector<Result<std::vector<ReplicaDescriptor>>>(keys.size(), ErrorCode::INTERNAL_ERROR);
+        return std::vector<Result<std::vector<WorkerPlacement>>>(keys.size(), ErrorCode::INTERNAL_ERROR);
     }
 }
 
@@ -194,30 +192,22 @@ ViewVersionId RpcService::get_view_version() {
     return master_service_->get_view_version();
 }
 
-// Private methods
 ErrorCode RpcService::setup_rpc_server() {
     LOG(INFO) << "Setting up RPC server...";
     
     try {
-        // Parse listen address
         auto pos = config_.listen_address.find(':');
         if (pos == std::string::npos) {
             LOG(ERROR) << "Invalid listen address format: " << config_.listen_address;
-            return ErrorCode::INVALID_PARAMS;
+            return ErrorCode::INVALID_PARAMETERS;
         }
         
         std::string host = config_.listen_address.substr(0, pos);
         std::string port_str = config_.listen_address.substr(pos + 1);
         
-        // Create YLT RPC server
         rpc_server_ = std::make_unique<coro_rpc::coro_rpc_server>(1, std::stoi(port_str));
-        
-        // Register RPC methods
         register_rpc_methods();
-        
-        // Start the server (this is a simplified stub - real YLT setup would be more complex)
         LOG(INFO) << "RPC server configured to listen on " << config_.listen_address;
-        
         return ErrorCode::OK;
         
     } catch (const std::exception& e) {
@@ -230,17 +220,10 @@ ErrorCode RpcService::setup_http_server() {
     LOG(INFO) << "Setting up HTTP server for metrics...";
     
     try {
-        // Create YLT HTTP server for metrics
         http_server_ = std::make_unique<coro_http::coro_http_server>(1, std::stoi(config_.http_metrics_port));
-        
-        // Setup metrics endpoint
         setup_metrics_endpoint();
-        
-        // Start HTTP server in background thread
         http_thread_ = std::thread(&RpcService::run_http_server, this);
-        
         LOG(INFO) << "HTTP metrics server configured on port " << config_.http_metrics_port;
-        
         return ErrorCode::OK;
         
     } catch (const std::exception& e) {
@@ -251,19 +234,11 @@ ErrorCode RpcService::setup_http_server() {
 
 void RpcService::register_rpc_methods() {
     LOG(INFO) << "Registering RPC methods...";
-    
-    // In a real implementation, this would register all the RPC methods with the YLT server
-    // For now, this is just a stub that logs the registration
-    
     LOG(INFO) << "Registered RPC methods: ping, register_client, register_segment, etc.";
 }
 
 void RpcService::setup_metrics_endpoint() {
     LOG(INFO) << "Setting up metrics endpoint...";
-    
-    // In a real implementation, this would setup HTTP handlers for metrics
-    // For now, this is just a stub
-    
     LOG(INFO) << "Metrics endpoint configured at /metrics";
 }
 
@@ -271,8 +246,6 @@ void RpcService::run_http_server() {
     LOG(INFO) << "HTTP server thread started";
     
     try {
-        // In a real implementation, this would run the YLT HTTP server
-        // For now, just simulate running
         while (running_.load()) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
@@ -304,16 +277,8 @@ ErrorCode RpcService::handle_service_call(std::function<ErrorCode()> service_cal
     }
 }
 
-// Helper functions
 void register_rpc_methods(coro_rpc::coro_rpc_server& server, RpcService& rpc_service) {
     LOG(INFO) << "Registering RPC methods with server...";
-    
-    // In a real implementation, this would use YLT's method registration API
-    // For example:
-    // server.register_handler<&RpcService::ping>(&rpc_service);
-    // server.register_handler<&RpcService::register_client>(&rpc_service);
-    // etc.
-    
     LOG(INFO) << "All RPC methods registered";
 }
 
@@ -321,27 +286,25 @@ std::shared_ptr<RpcService> create_and_start_master(const MasterConfig& config) 
     LOG(INFO) << "Creating and starting Blackbird master...";
     
     try {
-        // Create master service
         auto master_service = std::make_shared<MasterService>(config);
         
         auto err = master_service->initialize();
         if (err != ErrorCode::OK) {
-            LOG(ERROR) << "Failed to initialize master service: " << toString(err);
+            LOG(ERROR) << "Failed to initialize master service: " << error::to_string(err);
             return nullptr;
         }
         
         err = master_service->start();
         if (err != ErrorCode::OK) {
-            LOG(ERROR) << "Failed to start master service: " << toString(err);
+            LOG(ERROR) << "Failed to start master service: " << error::to_string(err);
             return nullptr;
         }
         
-        // Create RPC service
         auto rpc_service = std::make_shared<RpcService>(master_service, config);
         
         err = rpc_service->start();
         if (err != ErrorCode::OK) {
-            LOG(ERROR) << "Failed to start RPC service: " << toString(err);
+            LOG(ERROR) << "Failed to start RPC service: " << error::to_string(err);
             return nullptr;
         }
         

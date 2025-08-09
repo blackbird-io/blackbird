@@ -2,7 +2,7 @@
 
 #include <glog/logging.h>
 
-#include <etcd/Client.hpp>
+#include <etcd/SyncClient.hpp>
 #include <etcd/KeepAlive.hpp>
 #include <etcd/Watcher.hpp>
 
@@ -10,7 +10,7 @@ namespace blackbird {
 
 // Implementation details
 struct EtcdService::Impl {
-    std::unique_ptr<etcd::Client> client;
+    std::unique_ptr<etcd::SyncClient> client;
     std::unordered_map<std::string, std::unique_ptr<etcd::Watcher>> watchers;
     std::unordered_map<EtcdLeaseId, std::unique_ptr<etcd::KeepAlive>> keep_alives;
     std::vector<std::string> endpoint_list;
@@ -62,9 +62,8 @@ ErrorCode EtcdService::connect() {
     }
     
     try {
-        // Create etcd client with the list of endpoints
-        client_.reset();
-        impl_->client = std::make_unique<etcd::Client>(impl_->endpoint_list);
+        // Create etcd sync client with the first endpoint
+        impl_->client = std::make_unique<etcd::SyncClient>(impl_->endpoint_list.front());
         
         // Test connection with a simple operation
         auto response = impl_->client->head();
@@ -94,11 +93,12 @@ ErrorCode EtcdService::get(const std::string& key, std::string& value) {
             return ErrorCode::ETCD_KEY_NOT_FOUND;
         }
         
-        if (response.value().empty()) {
+        std::string v = response.value().as_string();
+        if (v.empty()) {
             return ErrorCode::ETCD_KEY_NOT_FOUND;
         }
         
-        value = response.value().as_string();
+        value = std::move(v);
         return ErrorCode::OK;
         
     } catch (const std::exception& e) {

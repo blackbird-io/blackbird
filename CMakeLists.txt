@@ -12,8 +12,10 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Compiler flags
-set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -DDEBUG")
+set(CMAKE_CXX_FLAGS_DEBUG "-g -O0")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
+
+add_compile_definitions(GLOG_NO_ABBREVIATED_SEVERITIES)
 
 # Find packages
 find_package(PkgConfig REQUIRED)
@@ -23,17 +25,28 @@ find_package(Threads REQUIRED)
 pkg_check_modules(UCX REQUIRED ucx)
 
 # etcd-cpp-apiv3 (required for service discovery and HA)
-find_package(etcd-cpp-apiv3 REQUIRED)
+find_package(etcd-cpp-api REQUIRED)
 
 # glog for logging
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GLOG REQUIRED libglog)
 
-# ylt for RPC (assuming it's installed)
-find_path(YLT_INCLUDE_DIR ylt/coro_rpc/coro_rpc_server.hpp)
-if(NOT YLT_INCLUDE_DIR)
-    message(FATAL_ERROR "YLT library not found. Please install yaLanTingLibs.")
-endif()
+include(FetchContent)
+
+FetchContent_Declare(
+  yalantinglibs
+  GIT_REPOSITORY      https://github.com/alibaba/yalantinglibs.git
+  GIT_TAG             lts1.2.0
+  GIT_SHALLOW         TRUE
+  GIT_SUBMODULES_RECURSE TRUE
+)
+FetchContent_MakeAvailable(yalantinglibs)
+
+include_directories(
+  ${yalantinglibs_SOURCE_DIR}/include/ylt/thirdparty
+  ${yalantinglibs_SOURCE_DIR}/include
+  ${yalantinglibs_SOURCE_DIR}/include/ylt/standalone
+)
 
 # nlohmann json
 find_package(nlohmann_json QUIET)

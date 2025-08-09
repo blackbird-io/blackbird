@@ -3,6 +3,7 @@
 #include <signal.h>
 #include <thread>
 #include <chrono>
+#include <iomanip>
 
 #include <glog/logging.h>
 #include <nlohmann/json.hpp>
@@ -90,7 +91,7 @@ int main(int argc, char* argv[]) {
         EtcdService etcd_test(config.etcd_endpoints);
         auto err = etcd_test.connect();
         if (err != ErrorCode::OK) {
-            LOG(ERROR) << "Failed to connect to etcd: " << toString(err);
+            LOG(ERROR) << "Failed to connect to etcd: " << error::to_string(err);
             LOG(ERROR) << "Please ensure etcd is running and accessible at: " << config.etcd_endpoints;
             return 1;
         }
@@ -102,13 +103,13 @@ int main(int argc, char* argv[]) {
         
         err = master_service->initialize();
         if (err != ErrorCode::OK) {
-            LOG(ERROR) << "Failed to initialize master service: " << toString(err);
+            LOG(ERROR) << "Failed to initialize master service: " << error::to_string(err);
             return 1;
         }
         
         err = master_service->start();
         if (err != ErrorCode::OK) {
-            LOG(ERROR) << "Failed to start master service: " << toString(err);
+            LOG(ERROR) << "Failed to start master service: " << error::to_string(err);
             return 1;
         }
         
@@ -118,7 +119,7 @@ int main(int argc, char* argv[]) {
         
         err = rpc_service->start();
         if (err != ErrorCode::OK) {
-            LOG(ERROR) << "Failed to start RPC service: " << toString(err);
+            LOG(ERROR) << "Failed to start RPC service: " << error::to_string(err);
             return 1;
         }
         
@@ -146,7 +147,7 @@ int main(int argc, char* argv[]) {
                               << ", utilization=" << std::fixed << std::setprecision(1) 
                               << (stats.utilization * 100.0) << "%";
                 } else {
-                    LOG(WARNING) << "Failed to get cluster stats: " << toString(get_error(stats_result));
+                    LOG(WARNING) << "Failed to get cluster stats: " << error::to_string(get_error(stats_result));
                 }
             }
         }

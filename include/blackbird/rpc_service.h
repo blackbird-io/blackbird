@@ -100,22 +100,22 @@ public:
     Result<bool> object_exists(const ObjectKey& key);
     
     /**
-     * @brief Get replica descriptors for an object
+     * @brief Get worker placements for an object
      * @param key Object key
-     * @return Vector of replica descriptors
+     * @return Vector of worker placements
      */
-    Result<std::vector<ReplicaDescriptor>> get_replicas(const ObjectKey& key);
+    Result<std::vector<WorkerPlacement>> get_workers(const ObjectKey& key);
     
     /**
      * @brief Start a put operation
      * @param key Object key
      * @param data_size Total data size
-     * @param config Replica configuration
-     * @return Vector of allocated replica descriptors
+     * @param config Worker configuration
+     * @return Vector of allocated worker placements
      */
-    Result<std::vector<ReplicaDescriptor>> put_start(const ObjectKey& key, 
+    Result<std::vector<WorkerPlacement>> put_start(const ObjectKey& key, 
                                                      size_t data_size, 
-                                                     const ReplicaConfig& config);
+                                                     const WorkerConfig& config);
     
     /**
      * @brief Complete a put operation
@@ -154,23 +154,23 @@ public:
     std::vector<Result<bool>> batch_object_exists(const std::vector<ObjectKey>& keys);
     
     /**
-     * @brief Batch get replica descriptors
+     * @brief Batch get worker placements
      * @param keys Vector of object keys
-     * @return Vector of replica descriptor results
+     * @return Vector of worker placement results
      */
-    std::vector<Result<std::vector<ReplicaDescriptor>>> batch_get_replicas(const std::vector<ObjectKey>& keys);
+    std::vector<Result<std::vector<WorkerPlacement>>> batch_get_workers(const std::vector<ObjectKey>& keys);
     
     /**
      * @brief Batch start put operations
      * @param keys Vector of object keys
      * @param data_sizes Vector of data sizes
-     * @param config Replica configuration
-     * @return Vector of replica descriptor results
+     * @param config Worker configuration
+     * @return Vector of worker placement results
      */
-    std::vector<Result<std::vector<ReplicaDescriptor>>> batch_put_start(
+    std::vector<Result<std::vector<WorkerPlacement>>> batch_put_start(
         const std::vector<ObjectKey>& keys,
         const std::vector<size_t>& data_sizes,
-        const ReplicaConfig& config);
+        const WorkerConfig& config);
     
     /**
      * @brief Batch complete put operations

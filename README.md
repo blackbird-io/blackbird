@@ -5,7 +5,7 @@ Blackbird is a high-performance, multi-tiered distributed storage cache built on
 ## Key Features
 
 - **UCX-based Communication**: Leverages UCX for RDMA and high-speed networking
-- **Multi-tiered Storage**: Supports both memory and disk-based replicas
+- **Multi-tiered Storage**: Supports both memory and disk-based worker placements
 - **Service Discovery**: Built-in etcd integration for cluster coordination
 - **High Availability**: Master election and failover support
 - **Batch Operations**: Efficient batch APIs for better performance
@@ -37,7 +37,7 @@ Blackbird is a high-performance, multi-tiered distributed storage cache built on
                    │ │ Manager             │ │
                    │ └─────────────────────┘ │
                    │ ┌─────────────────────┐ │
-                   │ │ Replica Placement   │ │
+                   │ │ Worker Placement    │ │
                    │ │ Engine              │ │
                    │ └─────────────────────┘ │
                    │ ┌─────────────────────┐ │
@@ -56,8 +56,8 @@ Blackbird is a high-performance, multi-tiered distributed storage cache built on
 ## Core Components
 
 ### 1. Master Service
-- **Object Metadata Management**: Tracks object locations and replica status
-- **Replica Placement**: Intelligent placement of replicas across nodes
+- **Object Metadata Management**: Tracks object locations and worker status
+- **Worker Placement**: Intelligent placement of workers across nodes
 - **Client Health Monitoring**: Monitors client health and handles failures
 - **Garbage Collection**: Automatic cleanup of expired objects
 - **Load Balancing**: Distributes load across available nodes
@@ -167,17 +167,17 @@ Blackbird is a high-performance, multi-tiered distributed storage cache built on
 // Object existence check
 auto exists = master_service->object_exists("my_key");
 
-// Get replica locations
-auto replicas = master_service->get_replicas("my_key");
+// Get worker placements
+auto workers = master_service->get_workers("my_key");
 
-// Start put operation (allocate replicas)
-auto allocated_replicas = master_service->put_start("my_key", data_size, config);
+// Start put operation (allocate workers)
+auto allocated_workers = master_service->put_start("my_key", data_size, worker_config);
 
 // Complete put operation
 auto result = master_service->put_complete("my_key");
 
 // Remove object
-auto result = master_service->remove_object("my_key");
+auto result2 = master_service->remove_object("my_key");
 ```
 
 ### Batch Operations
@@ -186,15 +186,15 @@ auto result = master_service->remove_object("my_key");
 std::vector<std::string> keys = {"key1", "key2", "key3"};
 auto results = master_service->batch_object_exists(keys);
 
-// Batch replica retrieval
-auto replica_results = master_service->batch_get_replicas(keys);
+// Batch worker retrieval
+auto worker_results = master_service->batch_get_workers(keys);
 ```
 
 ## Data Models
 
 ### Object Storage
 - **Keys**: String-based object identifiers
-- **Replicas**: Multiple copies with configurable placement
+- **Workers**: One or more placements per key with configurable policies
 - **TTL**: Automatic expiration support
 - **Soft Pinning**: Protection from eviction
 

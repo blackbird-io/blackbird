@@ -10,7 +10,7 @@
 #include <chrono>
 
 #include "blackbird/types.h"
-#include "blackbird/etcd_helper.h"
+#include "blackbird/etcd_service.h"
 
 namespace blackbird {
 
@@ -59,7 +59,7 @@ struct ClientInfo {
  */
 struct ObjectInfo {
     ObjectKey key;
-    std::vector<ReplicaDescriptor> replicas;
+    std::vector<WorkerPlacement> workers;
     std::chrono::steady_clock::time_point created_at;
     std::chrono::steady_clock::time_point last_accessed;
     bool soft_pinned{false};
@@ -78,11 +78,9 @@ struct ObjectInfo {
 };
 
 /**
- * @brief Master service that coordinates the distributed cache
- * 
- * The master service is responsible for:
+ * @brief Keystone service that coordinates the distributed cache
  * - Managing client registrations and health
- * - Coordinating replica placement
+ * - Coordinating worker placement
  * - Handling object metadata
  * - Performing garbage collection and eviction
  * - Providing service discovery through etcd
@@ -195,32 +193,32 @@ public:
     Result<bool> object_exists(const ObjectKey& key);
     
     /**
-     * @brief Get replica descriptors for an object
+     * @brief Get worker placements for an object
      * @param key Object key
-     * @return Vector of replica descriptors
+     * @return Vector of worker placements
      */
-    Result<std::vector<ReplicaDescriptor>> get_replicas(const ObjectKey& key);
+    Result<std::vector<WorkerPlacement>> get_workers(const ObjectKey& key);
     
     /**
-     * @brief Start a put operation (allocate replicas)
+     * @brief Start a put operation (allocate workers)
      * @param key Object key
      * @param data_size Total size of the object data
-     * @param config Replica configuration
-     * @return Vector of allocated replica descriptors
+     * @param config Worker configuration
+     * @return Vector of allocated worker placements
      */
-    Result<std::vector<ReplicaDescriptor>> put_start(const ObjectKey& key, 
+    Result<std::vector<WorkerPlacement>> put_start(const ObjectKey& key, 
                                                      size_t data_size, 
-                                                     const ReplicaConfig& config);
+                                                     const WorkerConfig& config);
     
     /**
-     * @brief Complete a put operation (mark replicas as complete)
+     * @brief Complete a put operation (mark workers as complete)
      * @param key Object key
      * @return ErrorCode::OK on success
      */
     ErrorCode put_complete(const ObjectKey& key);
     
     /**
-     * @brief Cancel a put operation (cleanup allocated replicas)
+     * @brief Cancel a put operation (cleanup allocated workers)
      * @param key Object key
      * @return ErrorCode::OK on success
      */
@@ -249,23 +247,23 @@ public:
     std::vector<Result<bool>> batch_object_exists(const std::vector<ObjectKey>& keys);
     
     /**
-     * @brief Batch get replica descriptors
+     * @brief Batch get worker placements
      * @param keys Vector of object keys
-     * @return Vector of replica descriptor results
+     * @return Vector of worker placement results
      */
-    std::vector<Result<std::vector<ReplicaDescriptor>>> batch_get_replicas(const std::vector<ObjectKey>& keys);
+    std::vector<Result<std::vector<WorkerPlacement>>> batch_get_workers(const std::vector<ObjectKey>& keys);
     
     /**
      * @brief Batch start put operations
      * @param keys Vector of object keys
      * @param data_sizes Vector of data sizes
-     * @param config Replica configuration (applied to all)
-     * @return Vector of allocated replica descriptor results
+     * @param config Worker configuration (applied to all)
+     * @return Vector of allocated worker placement results
      */
-    std::vector<Result<std::vector<ReplicaDescriptor>>> batch_put_start(
+    std::vector<Result<std::vector<WorkerPlacement>>> batch_put_start(
         const std::vector<ObjectKey>& keys,
         const std::vector<size_t>& data_sizes,
-        const ReplicaConfig& config);
+        const WorkerConfig& config);
     
     /**
      * @brief Batch complete put operations
@@ -317,7 +315,7 @@ private:
     MasterConfig config_;
     
     // Etcd integration
-    std::unique_ptr<EtcdHelper> etcd_;
+    std::unique_ptr<EtcdService> etcd_;
     EtcdLeaseId master_lease_id_{0};
     
     // State management
@@ -347,9 +345,9 @@ private:
     void run_health_checks();
     void run_etcd_keepalive();
     
-    ErrorCode allocate_replicas(const ObjectKey& key, size_t data_size, 
-                               const ReplicaConfig& config,
-                               std::vector<ReplicaDescriptor>& replicas);
+    ErrorCode allocate_workers(const ObjectKey& key, size_t data_size, 
+                               const WorkerConfig& config,
+                               std::vector<WorkerPlacement>& workers);
     
     void cleanup_stale_clients();
     void evict_objects_if_needed();
