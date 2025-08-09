@@ -7,11 +7,11 @@ protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS ${PROTO_SRC})
 set(BLACKBIRD_SOURCES
     types.cpp
     etcd_service.cpp
-    master_service.cpp
-    error/error_codes.cpp
-    ${PROTO_SRCS}
-    proto_adapters.cpp
+    keystone_service.cpp
     rpc_service.cpp
+    error/error_codes.cpp
+    worker.pb.cc
+    proto_adapters.cpp
 )
 
 # Create the main blackbird library

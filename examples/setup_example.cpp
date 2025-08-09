@@ -9,7 +9,7 @@
 #include <nlohmann/json.hpp>
 
 #include "blackbird/types.h"
-#include "blackbird/master_service.h"
+#include "blackbird/keystone_service.h"
 #include "blackbird/rpc_service.h"
 #include "blackbird/etcd_service.h"
 
@@ -46,7 +46,7 @@ int main(int argc, char* argv[]) {
     signal(SIGTERM, signal_handler);
     
     // Default configuration
-    MasterConfig config;
+    KeystoneConfig config;
     config.etcd_endpoints = "localhost:2379";
     config.listen_address = "0.0.0.0:9090";
     config.http_metrics_port = "9091";
@@ -76,7 +76,7 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    LOG(INFO) << "Starting Blackbird Master Service";
+    LOG(INFO) << "Starting Keystone Service";
     LOG(INFO) << "Configuration:";
     LOG(INFO) << "  Cluster ID: " << config.cluster_id;
     LOG(INFO) << "  Etcd Endpoints: " << config.etcd_endpoints;
@@ -97,25 +97,25 @@ int main(int argc, char* argv[]) {
         }
         LOG(INFO) << "Etcd connectivity test passed";
         
-        // Create and initialize master service
-        LOG(INFO) << "Creating master service...";
-        auto master_service = std::make_shared<MasterService>(config);
+        // Create and initialize keystone service
+        LOG(INFO) << "Creating keystone service...";
+        auto keystone_service = std::make_shared<KeystoneService>(config);
         
-        err = master_service->initialize();
+        err = keystone_service->initialize();
         if (err != ErrorCode::OK) {
-            LOG(ERROR) << "Failed to initialize master service: " << error::to_string(err);
+            LOG(ERROR) << "Failed to initialize keystone: " << error::to_string(err);
             return 1;
         }
         
-        err = master_service->start();
+        err = keystone_service->start();
         if (err != ErrorCode::OK) {
-            LOG(ERROR) << "Failed to start master service: " << error::to_string(err);
+            LOG(ERROR) << "Failed to start keystone: " << error::to_string(err);
             return 1;
         }
         
         // Create and start RPC service
         LOG(INFO) << "Creating RPC service...";
-        auto rpc_service = std::make_shared<RpcService>(master_service, config);
+        auto rpc_service = std::make_shared<RpcService>(keystone_service, config);
         
         err = rpc_service->start();
         if (err != ErrorCode::OK) {
@@ -123,11 +123,11 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         
-        LOG(INFO) << "Blackbird Master Service started successfully";
+        LOG(INFO) << "Keystone started successfully";
         LOG(INFO) << "RPC server listening on: " << config.listen_address;
         LOG(INFO) << "HTTP metrics available on port: " << config.http_metrics_port;
         LOG(INFO) << "Press Ctrl+C to shutdown";
-        
+
         // Main service loop
         while (g_running) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -137,7 +137,7 @@ int main(int argc, char* argv[]) {
             if (++status_counter >= 60) {  // Every 60 seconds
                 status_counter = 0;
                 
-                auto stats_result = master_service->get_cluster_stats();
+                auto stats_result = keystone_service->get_cluster_stats();
                 if (is_ok(stats_result)) {
                     auto stats = get_value(stats_result);
                     LOG(INFO) << "Cluster Status: "
@@ -154,13 +154,13 @@ int main(int argc, char* argv[]) {
         
         LOG(INFO) << "Shutting down services...";
         rpc_service->stop();
-        master_service->stop();
+        keystone_service->stop();
         
     } catch (const std::exception& e) {
         LOG(ERROR) << "Exception in main: " << e.what();
         return 1;
     }
     
-    LOG(INFO) << "Blackbird Master Service shutdown complete";
+    LOG(INFO) << "Keystone Service shutdown complete";
     return 0;
 } 

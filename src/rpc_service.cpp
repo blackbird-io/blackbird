@@ -4,9 +4,9 @@
 
 namespace blackbird {
 
-RpcService::RpcService(std::shared_ptr<MasterService> master_service, const MasterConfig& config)
-    : master_service_(std::move(master_service)), config_(config) {
-    LOG(INFO) << "Creating RpcService";
+RpcService::RpcService(std::shared_ptr<KeystoneService> keystone_service, const KeystoneConfig& config)
+    : keystone_service_(std::move(keystone_service)), config_(config) {
+    LOG(INFO) << "Creating RpcService for Keystone";
 }
 
 RpcService::~RpcService() {
@@ -63,40 +63,40 @@ void RpcService::stop() {
     LOG(INFO) << "RpcService stopped";
 }
 
-// RPC method implementations - these delegate to the master service
+// RPC method implementations - these delegate to the keystone service
 Result<PingResponse> RpcService::ping(const UUID& client_id) {
     return handle_service_call<PingResponse>([&]() {
-        return master_service_->ping_client(client_id);
+        return keystone_service_->ping_client(client_id);
     });
 }
 
 ErrorCode RpcService::register_client(const UUID& client_id, const NodeId& node_id, const std::string& endpoint) {
     return handle_service_call([&]() {
-        return master_service_->register_client(client_id, node_id, endpoint);
+        return keystone_service_->register_client(client_id, node_id, endpoint);
     });
 }
 
 ErrorCode RpcService::register_segment(const Segment& segment, const UUID& client_id) {
     return handle_service_call([&]() {
-        return master_service_->register_segment(segment, client_id);
+        return keystone_service_->register_segment(segment, client_id);
     });
 }
 
 ErrorCode RpcService::unregister_segment(const SegmentId& segment_id, const UUID& client_id) {
     return handle_service_call([&]() {
-        return master_service_->unregister_segment(segment_id, client_id);
+        return keystone_service_->unregister_segment(segment_id, client_id);
     });
 }
 
 Result<bool> RpcService::object_exists(const ObjectKey& key) {
     return handle_service_call<bool>([&]() {
-        return master_service_->object_exists(key);
+        return keystone_service_->object_exists(key);
     });
 }
 
 Result<std::vector<WorkerPlacement>> RpcService::get_workers(const ObjectKey& key) {
     return handle_service_call<std::vector<WorkerPlacement>>([&]() {
-        return master_service_->get_workers(key);
+        return keystone_service_->get_workers(key);
     });
 }
 
@@ -104,38 +104,38 @@ Result<std::vector<WorkerPlacement>> RpcService::put_start(const ObjectKey& key,
                                                              size_t data_size, 
                                                              const WorkerConfig& config) {
     return handle_service_call<std::vector<WorkerPlacement>>([&]() {
-        return master_service_->put_start(key, data_size, config);
+        return keystone_service_->put_start(key, data_size, config);
     });
 }
 
 ErrorCode RpcService::put_complete(const ObjectKey& key) {
     return handle_service_call([&]() {
-        return master_service_->put_complete(key);
+        return keystone_service_->put_complete(key);
     });
 }
 
 ErrorCode RpcService::put_cancel(const ObjectKey& key) {
     return handle_service_call([&]() {
-        return master_service_->put_cancel(key);
+        return keystone_service_->put_cancel(key);
     });
 }
 
 ErrorCode RpcService::remove_object(const ObjectKey& key) {
     return handle_service_call([&]() {
-        return master_service_->remove_object(key);
+        return keystone_service_->remove_object(key);
     });
 }
 
 Result<size_t> RpcService::remove_all_objects() {
     return handle_service_call<size_t>([&]() {
-        return master_service_->remove_all_objects();
+        return keystone_service_->remove_all_objects();
     });
 }
 
 // Batch operations
 std::vector<Result<bool>> RpcService::batch_object_exists(const std::vector<ObjectKey>& keys) {
     try {
-        return master_service_->batch_object_exists(keys);
+        return keystone_service_->batch_object_exists(keys);
     } catch (const std::exception& e) {
         LOG(ERROR) << "Exception in batch_object_exists: " << e.what();
         return std::vector<Result<bool>>(keys.size(), ErrorCode::INTERNAL_ERROR);
@@ -144,7 +144,7 @@ std::vector<Result<bool>> RpcService::batch_object_exists(const std::vector<Obje
 
 std::vector<Result<std::vector<WorkerPlacement>>> RpcService::batch_get_workers(const std::vector<ObjectKey>& keys) {
     try {
-        return master_service_->batch_get_workers(keys);
+        return keystone_service_->batch_get_workers(keys);
     } catch (const std::exception& e) {
         LOG(ERROR) << "Exception in batch_get_workers: " << e.what();
         return std::vector<Result<std::vector<WorkerPlacement>>>(keys.size(), ErrorCode::INTERNAL_ERROR);
@@ -156,7 +156,7 @@ std::vector<Result<std::vector<WorkerPlacement>>> RpcService::batch_put_start(
     const std::vector<size_t>& data_sizes,
     const WorkerConfig& config) {
     try {
-        return master_service_->batch_put_start(keys, data_sizes, config);
+        return keystone_service_->batch_put_start(keys, data_sizes, config);
     } catch (const std::exception& e) {
         LOG(ERROR) << "Exception in batch_put_start: " << e.what();
         return std::vector<Result<std::vector<WorkerPlacement>>>(keys.size(), ErrorCode::INTERNAL_ERROR);
@@ -165,7 +165,7 @@ std::vector<Result<std::vector<WorkerPlacement>>> RpcService::batch_put_start(
 
 std::vector<ErrorCode> RpcService::batch_put_complete(const std::vector<ObjectKey>& keys) {
     try {
-        return master_service_->batch_put_complete(keys);
+        return keystone_service_->batch_put_complete(keys);
     } catch (const std::exception& e) {
         LOG(ERROR) << "Exception in batch_put_complete: " << e.what();
         return std::vector<ErrorCode>(keys.size(), ErrorCode::INTERNAL_ERROR);
@@ -174,7 +174,7 @@ std::vector<ErrorCode> RpcService::batch_put_complete(const std::vector<ObjectKe
 
 std::vector<ErrorCode> RpcService::batch_put_cancel(const std::vector<ObjectKey>& keys) {
     try {
-        return master_service_->batch_put_cancel(keys);
+        return keystone_service_->batch_put_cancel(keys);
     } catch (const std::exception& e) {
         LOG(ERROR) << "Exception in batch_put_cancel: " << e.what();
         return std::vector<ErrorCode>(keys.size(), ErrorCode::INTERNAL_ERROR);
@@ -182,14 +182,14 @@ std::vector<ErrorCode> RpcService::batch_put_cancel(const std::vector<ObjectKey>
 }
 
 // Admin/Monitoring methods
-Result<MasterService::ClusterStats> RpcService::get_cluster_stats() {
-    return handle_service_call<MasterService::ClusterStats>([&]() {
-        return master_service_->get_cluster_stats();
+Result<KeystoneService::ClusterStats> RpcService::get_cluster_stats() {
+    return handle_service_call<KeystoneService::ClusterStats>([&]() {
+        return keystone_service_->get_cluster_stats();
     });
 }
 
 ViewVersionId RpcService::get_view_version() {
-    return master_service_->get_view_version();
+    return keystone_service_->get_view_version();
 }
 
 ErrorCode RpcService::setup_rpc_server() {
@@ -282,25 +282,25 @@ void register_rpc_methods(coro_rpc::coro_rpc_server& server, RpcService& rpc_ser
     LOG(INFO) << "All RPC methods registered";
 }
 
-std::shared_ptr<RpcService> create_and_start_master(const MasterConfig& config) {
-    LOG(INFO) << "Creating and starting Blackbird master...";
+std::shared_ptr<RpcService> create_and_start_keystone(const KeystoneConfig& config) {
+    LOG(INFO) << "Creating and starting Blackbird keystone...";
     
     try {
-        auto master_service = std::make_shared<MasterService>(config);
+        auto keystone_service = std::make_shared<KeystoneService>(config);
         
-        auto err = master_service->initialize();
+        auto err = keystone_service->initialize();
         if (err != ErrorCode::OK) {
-            LOG(ERROR) << "Failed to initialize master service: " << error::to_string(err);
+            LOG(ERROR) << "Failed to initialize keystone service: " << error::to_string(err);
             return nullptr;
         }
         
-        err = master_service->start();
+        err = keystone_service->start();
         if (err != ErrorCode::OK) {
-            LOG(ERROR) << "Failed to start master service: " << error::to_string(err);
+            LOG(ERROR) << "Failed to start keystone service: " << error::to_string(err);
             return nullptr;
         }
         
-        auto rpc_service = std::make_shared<RpcService>(master_service, config);
+        auto rpc_service = std::make_shared<RpcService>(keystone_service, config);
         
         err = rpc_service->start();
         if (err != ErrorCode::OK) {
@@ -308,11 +308,11 @@ std::shared_ptr<RpcService> create_and_start_master(const MasterConfig& config) 
             return nullptr;
         }
         
-        LOG(INFO) << "Blackbird master created and started successfully";
+        LOG(INFO) << "Blackbird keystone created and started successfully";
         return rpc_service;
         
     } catch (const std::exception& e) {
-        LOG(ERROR) << "Exception creating master: " << e.what();
+        LOG(ERROR) << "Exception creating keystone: " << e.what();
         return nullptr;
     }
 }

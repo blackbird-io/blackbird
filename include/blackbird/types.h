@@ -241,7 +241,7 @@ struct PingResponse {
 /**
  * @brief Configuration for the keystone service
  */
-struct MasterConfig {
+struct KeystoneConfig {
     std::string cluster_id{DEFAULT_CLUSTER_ID};
     std::string etcd_endpoints;  // Comma-separated etcd endpoints
     std::string listen_address{"0.0.0.0:9090"};
@@ -253,7 +253,7 @@ struct MasterConfig {
     double high_watermark{DEFAULT_HIGH_WATERMARK};
     int64_t client_ttl_sec{DEFAULT_CLIENT_TTL_SEC};
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(MasterConfig, cluster_id, etcd_endpoints, listen_address,
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(KeystoneConfig, cluster_id, etcd_endpoints, listen_address,
                                    http_metrics_port, enable_gc, enable_ha, eviction_ratio,
                                    high_watermark, client_ttl_sec)
 };
@@ -263,13 +263,13 @@ struct MasterConfig {
  */
 struct ClientConfig {
     std::string node_id;
-    std::string master_address;
+    std::string keystone_address;
     std::string local_address{"0.0.0.0:0"};  // Let UCX choose port
 
     size_t memory_pool_size{1ULL << 30};  // 1GB default
     std::string storage_path;  // Optional disk storage path
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(ClientConfig, node_id, master_address, local_address,
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(ClientConfig, node_id, keystone_address, local_address,
                                    memory_pool_size, storage_path)
 };
 

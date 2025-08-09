@@ -1,17 +1,15 @@
-# Blackbird - High Performance Distributed Storage Cache
+# Blackbird: High-Performance Distributed Storage Cache
 
-Blackbird is a high-performance, multi-tiered distributed storage cache built on top of UCX (Unified Communication X) for ultra-low latency remote memory access. It provides a simplified, manageable architecture inspired by distributed caching systems but designed specifically for modern high-performance computing and data-intensive applications.
+Blackbird is a high-performance, multi-tiered distributed storage cache system designed for modern applications requiring fast, scalable data access. Built on UCX (Unified Communication X) for optimal RDMA performance, Blackbird provides intelligent data placement across memory and storage tiers.
 
 ## Key Features
 
-- **UCX-based Communication**: Leverages UCX for RDMA and high-speed networking
-- **Multi-tiered Storage**: Supports both memory and disk-based worker placements
-- **Service Discovery**: Built-in etcd integration for cluster coordination
-- **High Availability**: Master election and failover support
-- **Batch Operations**: Efficient batch APIs for better performance
-- **Modern C++**: Clean C++20 codebase with type safety and performance
-- **JSON-based Configuration**: Easy configuration management
-- **Comprehensive Metrics**: HTTP-based metrics endpoint for monitoring
+- **High Performance**: Leverages UCX for low-latency RDMA communication
+- **Multi-Tiered Storage**: Intelligent placement across GPU memory, CPU memory, and NVMe storage
+- **High Availability**: Keystone election and failover support
+- **Worker Placement**: Sophisticated placement algorithms for optimal performance
+- **Etcd Integration**: Distributed coordination and service discovery
+- **Batch Operations**: High-throughput batch API support
 
 ## Architecture
 
@@ -30,7 +28,7 @@ Blackbird is a high-performance, multi-tiered distributed storage cache built on
           └──────────────────────┼──────────────────────┘
                                  │
                    ┌─────────────┴───────────┐
-                   │   Blackbird Master      │
+                   │   Blackbird Keystone    │
                    │                         │
                    │ ┌─────────────────────┐ │
                    │ │ Object Metadata     │ │
@@ -55,7 +53,7 @@ Blackbird is a high-performance, multi-tiered distributed storage cache built on
 
 ## Core Components
 
-### 1. Master Service
+### 1. Keystone Service
 - **Object Metadata Management**: Tracks object locations and worker status
 - **Worker Placement**: Intelligent placement of workers across nodes
 - **Client Health Monitoring**: Monitors client health and handles failures
@@ -121,24 +119,23 @@ Blackbird is a high-performance, multi-tiered distributed storage cache built on
         --advertise-client-urls http://localhost:2379
    ```
 
-2. **Start Blackbird Master**:
-   ```bash
-   ./examples/master_example --etcd-endpoints localhost:2379
-   ```
+2. **Start Keystone**:
+```bash
+./examples/keystone_example --etcd-endpoints localhost:2379
+```
 
-3. **The master will**:
+3. **The keystone will**:
    - Connect to etcd for coordination
    - Start RPC server on port 9090
-   - Expose metrics on HTTP port 9091
-   - Begin accepting client connections
+   - Start HTTP metrics server on port 9091
+   - Begin accepting worker and client connections
 
-## Configuration
+### Keystone Configuration
 
-### Master Configuration
 ```json
 {
   "cluster_id": "blackbird_cluster",
-  "etcd_endpoints": "localhost:2379,localhost:2380",
+  "etcd_endpoints": "localhost:2379",
   "listen_address": "0.0.0.0:9090",
   "http_metrics_port": "9091",
   "enable_gc": true,
@@ -150,10 +147,11 @@ Blackbird is a high-performance, multi-tiered distributed storage cache built on
 ```
 
 ### Client Configuration
+
 ```json
 {
   "node_id": "client-001",
-  "master_address": "localhost:9090",
+  "keystone_address": "localhost:9090",
   "local_address": "0.0.0.0:0",
   "memory_pool_size": 1073741824,
   "storage_path": "/tmp/blackbird"
@@ -164,30 +162,32 @@ Blackbird is a high-performance, multi-tiered distributed storage cache built on
 
 ### Core Operations
 ```cpp
-// Object existence check
-auto exists = master_service->object_exists("my_key");
+// Check if object exists
+auto exists = keystone_service->object_exists("my_key");
 
-// Get worker placements
-auto workers = master_service->get_workers("my_key");
+// Get worker placements for an object
+auto workers = keystone_service->get_workers("my_key");
 
-// Start put operation (allocate workers)
-auto allocated_workers = master_service->put_start("my_key", data_size, worker_config);
+// Start a put operation
+auto allocated_workers = keystone_service->put_start("my_key", data_size, worker_config);
 
-// Complete put operation
-auto result = master_service->put_complete("my_key");
+// Complete the put operation
+auto result = keystone_service->put_complete("my_key");
 
-// Remove object
-auto result2 = master_service->remove_object("my_key");
-```
+// Remove an object
+auto result2 = keystone_service->remove_object("my_key");
 
 ### Batch Operations
+
 ```cpp
 // Batch existence check
-std::vector<std::string> keys = {"key1", "key2", "key3"};
-auto results = master_service->batch_object_exists(keys);
+auto results = keystone_service->batch_object_exists(keys);
 
-// Batch worker retrieval
-auto worker_results = master_service->batch_get_workers(keys);
+// Batch get workers
+auto worker_results = keystone_service->batch_get_workers(keys);
+
+// Batch put operations
+auto put_results = keystone_service->batch_put_start(keys, sizes, config);
 ```
 
 ## Data Models
@@ -214,8 +214,13 @@ curl http://localhost:9091/metrics
 
 ### Cluster Statistics
 ```cpp
-auto stats = master_service->get_cluster_stats();
-// Returns: client counts, segment info, object counts, utilization
+auto stats = keystone_service->get_cluster_stats();
+if (is_ok(stats)) {
+    auto cluster_stats = get_value(stats);
+    std::cout << "Active clients: " << cluster_stats.active_clients << std::endl;
+    std::cout << "Total objects: " << cluster_stats.total_objects << std::endl;
+    std::cout << "Utilization: " << (cluster_stats.utilization * 100) << "%" << std::endl;
+}
 ```
 
 ### Health Checks
@@ -225,18 +230,25 @@ auto stats = master_service->get_cluster_stats();
 
 ## Development
 
-### Project Structure
+## Project Structure
+
 ```
 blackbird/
-├── include/blackbird/     # Public headers
-│   ├── types.h           # Core data types
-│   ├── etcd_helper.h     # etcd integration
-│   ├── master_service.h  # Master service
-│   └── rpc_service.h     # RPC layer
-├── src/                  # Implementation
-├── examples/             # Example programs
-├── tests/               # Unit tests
-└── docs/                # Documentation
+├── include/blackbird/          # Public headers
+│   ├── types.h                 # Core types and configuration
+│   ├── keystone_service.h      # Keystone service
+│   ├── rpc_service.h           # RPC service wrapper
+│   └── etcd_service.h          # Etcd integration
+├── src/                        # Implementation files
+│   ├── types.cpp
+│   ├── keystone_service.cpp
+│   ├── rpc_service.cpp
+│   ├── etcd_service.cpp
+│   └── error/                  # Error handling
+├── examples/                   # Usage examples
+│   └── setup_example.cpp
+├── proto/                      # Protocol buffer definitions
+└── CMakeLists.txt
 ```
 
 ### Building Tests
@@ -256,7 +268,7 @@ ctest
 
 ## Roadmap
 
-- [ ] **Phase 1**: Complete master service implementation
+- [ ] **Phase 1**: Complete keystone service implementation
 - [ ] **Phase 2**: Client library with UCX integration
 - [ ] **Phase 3**: Storage backend implementation
 - [ ] **Phase 4**: Advanced features (compression, encryption)

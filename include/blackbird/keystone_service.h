@@ -85,39 +85,39 @@ struct ObjectInfo {
  * - Performing garbage collection and eviction
  * - Providing service discovery through etcd
  */
-class MasterService {
+class KeystoneService {
 public:
     /**
      * @brief Constructor
-     * @param config Master service configuration
+     * @param config Keystone service configuration
      */
-    explicit MasterService(const MasterConfig& config);
+    explicit KeystoneService(const KeystoneConfig& config);
     
     /**
      * @brief Destructor
      */
-    ~MasterService();
+    ~KeystoneService();
     
     // Non-copyable, non-movable
-    MasterService(const MasterService&) = delete;
-    MasterService& operator=(const MasterService&) = delete;
-    MasterService(MasterService&&) = delete;
-    MasterService& operator=(MasterService&&) = delete;
+    KeystoneService(const KeystoneService&) = delete;
+    KeystoneService& operator=(const KeystoneService&) = delete;
+    KeystoneService(KeystoneService&&) = delete;
+    KeystoneService& operator=(KeystoneService&&) = delete;
     
     /**
-     * @brief Initialize the master service
+     * @brief Initialize the keystone service
      * @return ErrorCode::OK on success
      */
     ErrorCode initialize();
     
     /**
-     * @brief Start the master service
+     * @brief Start the keystone service
      * @return ErrorCode::OK on success
      */
     ErrorCode start();
     
     /**
-     * @brief Stop the master service
+     * @brief Stop the keystone service
      */
     void stop();
     
@@ -129,7 +129,7 @@ public:
     // === Client Management ===
     
     /**
-     * @brief Register a client with the master
+     * @brief Register a client with the keystone
      * @param client_id Unique client identifier
      * @param node_id Node identifier where client is running
      * @param endpoint Client's network endpoint
@@ -161,7 +161,7 @@ public:
     // === Segment Management ===
     
     /**
-     * @brief Register a memory segment with the master
+     * @brief Register a memory segment with the keystone
      * @param segment Segment information
      * @param client_id Client that owns the segment
      * @return ErrorCode::OK on success
@@ -312,11 +312,11 @@ public:
 
 private:
     // Configuration
-    MasterConfig config_;
+    KeystoneConfig config_;
     
     // Etcd integration
     std::unique_ptr<EtcdService> etcd_;
-    EtcdLeaseId master_lease_id_{0};
+    EtcdLeaseId keystone_lease_id_{0};
     
     // State management
     std::atomic<bool> running_{false};

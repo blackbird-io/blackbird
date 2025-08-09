@@ -1,23 +1,23 @@
-#include "blackbird/master_service.h"
+#include "blackbird/keystone_service.h"
 
 #include <glog/logging.h>
 #include <algorithm>
 
 namespace blackbird {
 
-MasterService::MasterService(const MasterConfig& config) 
+KeystoneService::KeystoneService(const KeystoneConfig& config) 
     : config_(config) {
-    LOG(INFO) << "Creating MasterService with cluster_id: " << config_.cluster_id;
+    LOG(INFO) << "Creating Keystone service with cluster_id: " << config_.cluster_id;
 }
 
-MasterService::~MasterService() {
+KeystoneService::~KeystoneService() {
     if (running_.load()) {
         stop();
     }
 }
 
-ErrorCode MasterService::initialize() {
-    LOG(INFO) << "Initializing MasterService...";
+ErrorCode KeystoneService::initialize() {
+    LOG(INFO) << "Initializing Keystone service...";
     
     if (!config_.etcd_endpoints.empty()) {
         auto err = setup_etcd_integration();
@@ -29,15 +29,15 @@ ErrorCode MasterService::initialize() {
         LOG(WARNING) << "No etcd endpoints configured, running without etcd";
     }
     
-    LOG(INFO) << "MasterService initialized successfully";
+    LOG(INFO) << "Keystone service initialized successfully";
     return ErrorCode::OK;
 }
 
-ErrorCode MasterService::start() {
-    LOG(INFO) << "Starting MasterService...";
+ErrorCode KeystoneService::start() {
+    LOG(INFO) << "Starting Keystone service...";
     
     if (running_.load()) {
-        LOG(WARNING) << "MasterService is already running";
+        LOG(WARNING) << "Keystone service is already running";
         return ErrorCode::OK;
     }
     
@@ -46,21 +46,21 @@ ErrorCode MasterService::start() {
     
     // Start background threads
     if (config_.enable_gc) {
-        gc_thread_ = std::thread(&MasterService::run_garbage_collection, this);
+        gc_thread_ = std::thread(&KeystoneService::run_garbage_collection, this);
     }
     
-    health_check_thread_ = std::thread(&MasterService::run_health_checks, this);
+    health_check_thread_ = std::thread(&KeystoneService::run_health_checks, this);
     
     if (etcd_) {
-        etcd_keepalive_thread_ = std::thread(&MasterService::run_etcd_keepalive, this);
+        etcd_keepalive_thread_ = std::thread(&KeystoneService::run_etcd_keepalive, this);
     }
     
-    LOG(INFO) << "MasterService started successfully";
+    LOG(INFO) << "Keystone service started successfully";
     return ErrorCode::OK;
 }
 
-void MasterService::stop() {
-    LOG(INFO) << "Stopping MasterService...";
+void KeystoneService::stop() {
+    LOG(INFO) << "Stopping Keystone service...";
     
     running_.store(false);
     
@@ -78,16 +78,16 @@ void MasterService::stop() {
     }
     
     // Cleanup etcd lease
-    if (etcd_ && master_lease_id_ != 0) {
-        etcd_->revoke_lease(master_lease_id_);
-        master_lease_id_ = 0;
+    if (etcd_ && keystone_lease_id_ != 0) {
+        etcd_->revoke_lease(keystone_lease_id_);
+        keystone_lease_id_ = 0;
     }
     
-    LOG(INFO) << "MasterService stopped";
+    LOG(INFO) << "Keystone service stopped";
 }
 
 // Client Management
-ErrorCode MasterService::register_client(const UUID& client_id, const NodeId& node_id, const std::string& endpoint) {
+ErrorCode KeystoneService::register_client(const UUID& client_id, const NodeId& node_id, const std::string& endpoint) {
     std::unique_lock<std::shared_mutex> lock(clients_mutex_);
     
     auto now = std::chrono::steady_clock::now();
@@ -103,7 +103,7 @@ ErrorCode MasterService::register_client(const UUID& client_id, const NodeId& no
     return ErrorCode::OK;
 }
 
-Result<PingResponse> MasterService::ping_client(const UUID& client_id) {
+Result<PingResponse> KeystoneService::ping_client(const UUID& client_id) {
     std::unique_lock<std::shared_mutex> lock(clients_mutex_);
     
     auto it = clients_.find(client_id);
@@ -121,7 +121,7 @@ Result<PingResponse> MasterService::ping_client(const UUID& client_id) {
     return response;
 }
 
-ErrorCode MasterService::unregister_client(const UUID& client_id) {
+ErrorCode KeystoneService::unregister_client(const UUID& client_id) {
     std::unique_lock<std::shared_mutex> lock(clients_mutex_);
     
     auto it = clients_.find(client_id);
@@ -137,7 +137,7 @@ ErrorCode MasterService::unregister_client(const UUID& client_id) {
     return ErrorCode::OK;
 }
 
-ErrorCode MasterService::get_active_clients(std::vector<ClientInfo>& clients) const {
+ErrorCode KeystoneService::get_active_clients(std::vector<ClientInfo>& clients) const {
     std::shared_lock<std::shared_mutex> lock(clients_mutex_);
     
     clients.clear();
@@ -156,7 +156,7 @@ ErrorCode MasterService::get_active_clients(std::vector<ClientInfo>& clients) co
 }
 
 // Segment Management
-ErrorCode MasterService::register_segment(const Segment& segment, const UUID& client_id) {
+ErrorCode KeystoneService::register_segment(const Segment& segment, const UUID& client_id) {
     std::unique_lock<std::shared_mutex> segments_lock(segments_mutex_);
     std::unique_lock<std::shared_mutex> clients_lock(clients_mutex_);
     
@@ -183,7 +183,7 @@ ErrorCode MasterService::register_segment(const Segment& segment, const UUID& cl
     return ErrorCode::OK;
 }
 
-ErrorCode MasterService::unregister_segment(const SegmentId& segment_id, const UUID& client_id) {
+ErrorCode KeystoneService::unregister_segment(const SegmentId& segment_id, const UUID& client_id) {
     std::unique_lock<std::shared_mutex> segments_lock(segments_mutex_);
     std::unique_lock<std::shared_mutex> clients_lock(clients_mutex_);
     
@@ -210,7 +210,7 @@ ErrorCode MasterService::unregister_segment(const SegmentId& segment_id, const U
     return ErrorCode::OK;
 }
 
-ErrorCode MasterService::get_segments(std::vector<Segment>& segments) const {
+ErrorCode KeystoneService::get_segments(std::vector<Segment>& segments) const {
     std::shared_lock<std::shared_mutex> lock(segments_mutex_);
     
     segments.clear();
@@ -224,7 +224,7 @@ ErrorCode MasterService::get_segments(std::vector<Segment>& segments) const {
 }
 
 // Object Management - Stub implementations
-Result<bool> MasterService::object_exists(const ObjectKey& key) {
+Result<bool> KeystoneService::object_exists(const ObjectKey& key) {
     std::shared_lock<std::shared_mutex> lock(objects_mutex_);
     
     auto it = objects_.find(key);
@@ -237,7 +237,7 @@ Result<bool> MasterService::object_exists(const ObjectKey& key) {
     return exists;
 }
 
-Result<std::vector<WorkerPlacement>> MasterService::get_workers(const ObjectKey& key) {
+Result<std::vector<WorkerPlacement>> KeystoneService::get_workers(const ObjectKey& key) {
     std::shared_lock<std::shared_mutex> lock(objects_mutex_);
     
     auto it = objects_.find(key);
@@ -249,7 +249,7 @@ Result<std::vector<WorkerPlacement>> MasterService::get_workers(const ObjectKey&
     return it->second.workers;
 }
 
-Result<std::vector<WorkerPlacement>> MasterService::put_start(const ObjectKey& key, 
+Result<std::vector<WorkerPlacement>> KeystoneService::put_start(const ObjectKey& key, 
                                                               size_t data_size, 
                                                               const WorkerConfig& config) {
     std::unique_lock<std::shared_mutex> lock(objects_mutex_);
@@ -282,7 +282,7 @@ Result<std::vector<WorkerPlacement>> MasterService::put_start(const ObjectKey& k
     return workers;
 }
 
-ErrorCode MasterService::put_complete(const ObjectKey& key) {
+ErrorCode KeystoneService::put_complete(const ObjectKey& key) {
     std::unique_lock<std::shared_mutex> lock(objects_mutex_);
     
     auto it = objects_.find(key);
@@ -299,7 +299,7 @@ ErrorCode MasterService::put_complete(const ObjectKey& key) {
     return ErrorCode::OK;
 }
 
-ErrorCode MasterService::put_cancel(const ObjectKey& key) {
+ErrorCode KeystoneService::put_cancel(const ObjectKey& key) {
     std::unique_lock<std::shared_mutex> lock(objects_mutex_);
     
     auto it = objects_.find(key);
@@ -313,7 +313,7 @@ ErrorCode MasterService::put_cancel(const ObjectKey& key) {
     return ErrorCode::OK;
 }
 
-ErrorCode MasterService::remove_object(const ObjectKey& key) {
+ErrorCode KeystoneService::remove_object(const ObjectKey& key) {
     std::unique_lock<std::shared_mutex> lock(objects_mutex_);
     
     auto it = objects_.find(key);
@@ -327,7 +327,7 @@ ErrorCode MasterService::remove_object(const ObjectKey& key) {
     return ErrorCode::OK;
 }
 
-Result<size_t> MasterService::remove_all_objects() {
+Result<size_t> KeystoneService::remove_all_objects() {
     std::unique_lock<std::shared_mutex> lock(objects_mutex_);
     
     size_t count = objects_.size();
@@ -338,7 +338,7 @@ Result<size_t> MasterService::remove_all_objects() {
 }
 
 // Batch operations - Simple implementations
-std::vector<Result<bool>> MasterService::batch_object_exists(const std::vector<ObjectKey>& keys) {
+std::vector<Result<bool>> KeystoneService::batch_object_exists(const std::vector<ObjectKey>& keys) {
     std::vector<Result<bool>> results;
     results.reserve(keys.size());
     
@@ -349,7 +349,7 @@ std::vector<Result<bool>> MasterService::batch_object_exists(const std::vector<O
     return results;
 }
 
-std::vector<Result<std::vector<WorkerPlacement>>> MasterService::batch_get_workers(const std::vector<ObjectKey>& keys) {
+std::vector<Result<std::vector<WorkerPlacement>>> KeystoneService::batch_get_workers(const std::vector<ObjectKey>& keys) {
     std::vector<Result<std::vector<WorkerPlacement>>> results;
     results.reserve(keys.size());
     
@@ -360,7 +360,7 @@ std::vector<Result<std::vector<WorkerPlacement>>> MasterService::batch_get_worke
     return results;
 }
 
-std::vector<Result<std::vector<WorkerPlacement>>> MasterService::batch_put_start(
+std::vector<Result<std::vector<WorkerPlacement>>> KeystoneService::batch_put_start(
     const std::vector<ObjectKey>& keys,
     const std::vector<size_t>& data_sizes,
     const WorkerConfig& config) {
@@ -381,7 +381,7 @@ std::vector<Result<std::vector<WorkerPlacement>>> MasterService::batch_put_start
     return results;
 }
 
-std::vector<ErrorCode> MasterService::batch_put_complete(const std::vector<ObjectKey>& keys) {
+std::vector<ErrorCode> KeystoneService::batch_put_complete(const std::vector<ObjectKey>& keys) {
     std::vector<ErrorCode> results;
     results.reserve(keys.size());
     
@@ -392,7 +392,7 @@ std::vector<ErrorCode> MasterService::batch_put_complete(const std::vector<Objec
     return results;
 }
 
-std::vector<ErrorCode> MasterService::batch_put_cancel(const std::vector<ObjectKey>& keys) {
+std::vector<ErrorCode> KeystoneService::batch_put_cancel(const std::vector<ObjectKey>& keys) {
     std::vector<ErrorCode> results;
     results.reserve(keys.size());
     
@@ -404,7 +404,7 @@ std::vector<ErrorCode> MasterService::batch_put_cancel(const std::vector<ObjectK
 }
 
 // Metrics and status
-Result<MasterService::ClusterStats> MasterService::get_cluster_stats() const {
+Result<KeystoneService::ClusterStats> KeystoneService::get_cluster_stats() const {
     ClusterStats stats;
     
     // Client statistics
@@ -448,7 +448,7 @@ Result<MasterService::ClusterStats> MasterService::get_cluster_stats() const {
 }
 
 // Private methods
-ErrorCode MasterService::setup_etcd_integration() {
+ErrorCode KeystoneService::setup_etcd_integration() {
     if (config_.etcd_endpoints.empty()) {
         return ErrorCode::OK;  // No etcd configured
     }
@@ -460,20 +460,20 @@ ErrorCode MasterService::setup_etcd_integration() {
         return err;
     }
     
-    // Register master service with etcd
-    std::string master_id = "master-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
-    err = etcd_->register_service("blackbird-master", master_id, config_.listen_address, 
-                                 config_.client_ttl_sec, master_lease_id_);
+    // Register keystone service with etcd
+    std::string service_id = "keystone-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    err = etcd_->register_service("blackbird-keystone", service_id, config_.listen_address, 
+                                 config_.client_ttl_sec, keystone_lease_id_);
     if (err != ErrorCode::OK) {
-        LOG(ERROR) << "Failed to register master service with etcd: " << error::to_string(err);
+        LOG(ERROR) << "Failed to register keystone service with etcd: " << error::to_string(err);
         return err;
     }
     
-    LOG(INFO) << "Registered master service with etcd (lease_id: " << master_lease_id_ << ")";
+    LOG(INFO) << "Registered keystone service with etcd (lease_id: " << keystone_lease_id_ << ")";
     return ErrorCode::OK;
 }
 
-void MasterService::run_garbage_collection() {
+void KeystoneService::run_garbage_collection() {
     LOG(INFO) << "Starting garbage collection thread";
     
     while (running_.load()) {
@@ -501,7 +501,7 @@ void MasterService::run_garbage_collection() {
     LOG(INFO) << "Garbage collection thread stopped";
 }
 
-void MasterService::run_health_checks() {
+void KeystoneService::run_health_checks() {
     LOG(INFO) << "Starting health check thread";
     
     while (running_.load()) {
@@ -520,7 +520,7 @@ void MasterService::run_health_checks() {
     LOG(INFO) << "Health check thread stopped";
 }
 
-void MasterService::run_etcd_keepalive() {
+void KeystoneService::run_etcd_keepalive() {
     LOG(INFO) << "Starting etcd keepalive thread";
     
     while (running_.load()) {
@@ -528,8 +528,8 @@ void MasterService::run_etcd_keepalive() {
         
         if (!running_.load()) break;
         
-        if (etcd_ && master_lease_id_ != 0) {
-            auto err = etcd_->keep_alive(master_lease_id_);
+        if (etcd_ && keystone_lease_id_ != 0) {
+            auto err = etcd_->keep_alive(keystone_lease_id_);
             if (err != ErrorCode::OK) {
                 LOG(WARNING) << "Failed to keep alive etcd lease: " << error::to_string(err);
             }
@@ -539,7 +539,7 @@ void MasterService::run_etcd_keepalive() {
     LOG(INFO) << "Etcd keepalive thread stopped";
 }
 
-ErrorCode MasterService::allocate_workers(const ObjectKey& key, size_t data_size, 
+ErrorCode KeystoneService::allocate_workers(const ObjectKey& key, size_t data_size, 
                                           const WorkerConfig& config,
                                           std::vector<WorkerPlacement>& workers) {
     workers.clear();
@@ -579,7 +579,7 @@ ErrorCode MasterService::allocate_workers(const ObjectKey& key, size_t data_size
     return ErrorCode::OK;
 }
 
-void MasterService::cleanup_stale_clients() {
+void KeystoneService::cleanup_stale_clients() {
     std::unique_lock<std::shared_mutex> lock(clients_mutex_);
     
     auto now = std::chrono::steady_clock::now();
@@ -597,7 +597,7 @@ void MasterService::cleanup_stale_clients() {
     }
 }
 
-void MasterService::evict_objects_if_needed() {
+void KeystoneService::evict_objects_if_needed() {
     auto stats_result = get_cluster_stats();
     if (!is_ok(stats_result)) {
         return;
@@ -636,11 +636,11 @@ void MasterService::evict_objects_if_needed() {
     LOG(INFO) << "Evicted " << evicted << " objects";
 }
 
-ViewVersionId MasterService::increment_view_version() {
+ViewVersionId KeystoneService::increment_view_version() {
     return view_version_.fetch_add(1) + 1;
 }
 
-std::string MasterService::make_etcd_key(const std::string& suffix) const {
+std::string KeystoneService::make_etcd_key(const std::string& suffix) const {
     return "/blackbird/clusters/" + config_.cluster_id + "/" + suffix;
 }
 

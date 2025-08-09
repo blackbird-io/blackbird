@@ -8,14 +8,14 @@
 #include <ylt/coro_http/coro_http_server.hpp>
 
 #include "blackbird/types.h"
-#include "blackbird/master_service.h"
+#include "blackbird/keystone_service.h"
 
 namespace blackbird {
 
 /**
- * @brief RPC service wrapper for MasterService
+ * @brief RPC service wrapper for KeystoneService
  * 
- * This class provides the RPC interface for the master service using the YLT framework.
+ * This class provides the RPC interface for the Keystone using the YLT framework.
  * It handles:
  * - RPC method registration and routing
  * - Error handling and response formatting
@@ -26,10 +26,10 @@ class RpcService {
 public:
     /**
      * @brief Constructor
-     * @param master_service The master service instance to wrap
-     * @param config Master configuration (for server settings)
+     * @param keystone_service The keystone service instance to wrap
+     * @param config Keystone configuration (for server settings)
      */
-    explicit RpcService(std::shared_ptr<MasterService> master_service, const MasterConfig& config);
+    explicit RpcService(std::shared_ptr<KeystoneService> keystone_service, const KeystoneConfig& config);
     
     /**
      * @brief Destructor
@@ -192,7 +192,7 @@ public:
      * @brief Get cluster statistics
      * @return Cluster statistics
      */
-    Result<MasterService::ClusterStats> get_cluster_stats();
+    Result<KeystoneService::ClusterStats> get_cluster_stats();
     
     /**
      * @brief Get current view version
@@ -202,8 +202,8 @@ public:
 
 private:
     // Core services
-    std::shared_ptr<MasterService> master_service_;
-    MasterConfig config_;
+    std::shared_ptr<KeystoneService> keystone_service_;
+    KeystoneConfig config_;
     
     // RPC server
     std::unique_ptr<coro_rpc::coro_rpc_server> rpc_server_;
@@ -237,10 +237,10 @@ private:
 void register_rpc_methods(coro_rpc::coro_rpc_server& server, RpcService& rpc_service);
 
 /**
- * @brief Helper function to create and start a complete blackbird master
- * @param config Master configuration
+ * @brief Helper function to create and start a complete blackbird keystone
+ * @param config Keystone configuration
  * @return Shared pointer to the running RPC service, or nullptr on error
  */
-std::shared_ptr<RpcService> create_and_start_master(const MasterConfig& config);
+std::shared_ptr<RpcService> create_and_start_keystone(const KeystoneConfig& config);
 
 }  // namespace blackbird 
