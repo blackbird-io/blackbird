@@ -2,7 +2,9 @@
 
 #include <glog/logging.h>
 #include <algorithm>
+#include <nlohmann/json.hpp>
 
+// Keystone is the master node for blackbird.   
 namespace blackbird {
 
 KeystoneService::KeystoneService(const KeystoneConfig& config) 
@@ -13,6 +15,12 @@ KeystoneService::KeystoneService(const KeystoneConfig& config)
 KeystoneService::~KeystoneService() {
     if (running_.load()) {
         stop();
+    }
+    
+    // Cleanup etcd resources
+    if (etcd_) {
+        // This will cleanup watchers and leases
+        etcd_.reset();
     }
 }
 
@@ -52,6 +60,17 @@ ErrorCode KeystoneService::start() {
     health_check_thread_ = std::thread(&KeystoneService::run_health_checks, this);
     
     if (etcd_) {
+        // CRITICAL: Load existing state from etcd BEFORE starting any threads or watchers
+        // to avoid missing existing registrations and ensure consistency
+        load_existing_state_from_etcd();
+        
+        // Set up etcd watchers for cluster state (after loading existing state)
+        setup_watcher_with_error_handling("clients", [this]() { watch_clients_namespace(); });
+        setup_watcher_with_error_handling("workers", [this]() { watch_worker_registry_namespace(); });
+        setup_watcher_with_error_handling("heartbeats", [this]() { watch_heartbeat_namespace(); });
+        setup_watcher_with_error_handling("chunks", [this]() { watch_chunks_namespace(); });
+        
+        // Start keepalive thread AFTER watchers are set up and lease is established
         etcd_keepalive_thread_ = std::thread(&KeystoneService::run_etcd_keepalive, this);
     }
     
@@ -86,56 +105,8 @@ void KeystoneService::stop() {
     LOG(INFO) << "Keystone service stopped";
 }
 
-// Client Management
-ErrorCode KeystoneService::register_client(const UUID& client_id, const NodeId& node_id, const std::string& endpoint) {
-    std::unique_lock<std::shared_mutex> lock(clients_mutex_);
-    
-    auto now = std::chrono::steady_clock::now();
-    ClientInfo& client = clients_[client_id];
-    client.client_id = client_id;
-    client.node_id = node_id;
-    client.endpoint = endpoint;
-    client.last_ping = now;
-    
-    LOG(INFO) << "Registered client: " << client_id << " (" << node_id << ") at " << endpoint;
-    increment_view_version();
-    
-    return ErrorCode::OK;
-}
-
-Result<PingResponse> KeystoneService::ping_client(const UUID& client_id) {
-    std::unique_lock<std::shared_mutex> lock(clients_mutex_);
-    
-    auto it = clients_.find(client_id);
-    if (it == clients_.end()) {
-        LOG(WARNING) << "Ping from unknown client: " << client_id;
-        return ErrorCode::INVALID_PARAMETERS;
-    }
-    
-    it->second.last_ping = std::chrono::steady_clock::now();
-    
-    PingResponse response;
-    response.view_version = view_version_.load();
-    response.client_status = ClientStatus::ACTIVE;
-    
-    return response;
-}
-
-ErrorCode KeystoneService::unregister_client(const UUID& client_id) {
-    std::unique_lock<std::shared_mutex> lock(clients_mutex_);
-    
-    auto it = clients_.find(client_id);
-    if (it == clients_.end()) {
-        LOG(WARNING) << "Attempt to unregister unknown client: " << client_id;
-        return ErrorCode::INVALID_PARAMETERS;
-    }
-    
-    LOG(INFO) << "Unregistering client: " << client_id << " (" << it->second.node_id << ")";
-    clients_.erase(it);
-    increment_view_version();
-    
-    return ErrorCode::OK;
-}
+// Client Management - REMOVED: Clients register directly to etcd
+// Keystone only watches for changes and maintains read-only view
 
 ErrorCode KeystoneService::get_active_clients(std::vector<ClientInfo>& clients) const {
     std::shared_lock<std::shared_mutex> lock(clients_mutex_);
@@ -155,68 +126,98 @@ ErrorCode KeystoneService::get_active_clients(std::vector<ClientInfo>& clients) 
     return ErrorCode::OK;
 }
 
-// Segment Management
-ErrorCode KeystoneService::register_segment(const Segment& segment, const UUID& client_id) {
-    std::unique_lock<std::shared_mutex> segments_lock(segments_mutex_);
-    std::unique_lock<std::shared_mutex> clients_lock(clients_mutex_);
+// Client ping for future compatibility 
+Result<PingResponse> KeystoneService::ping_client(const UUID& client_id) {
+    std::unique_lock<std::shared_mutex> lock(clients_mutex_);
     
-    // Check if client exists
-    auto client_it = clients_.find(client_id);
-    if (client_it == clients_.end()) {
-        LOG(ERROR) << "Attempt to register segment from unknown client: " << client_id;
-        return ErrorCode::INVALID_PARAMETERS;
+    auto it = clients_.find(client_id);
+    if (it == clients_.end()) {
+        return ErrorCode::CLIENT_NOT_FOUND;
     }
     
-    // Check if segment already exists
-    if (segments_.find(segment.id) != segments_.end()) {
-        LOG(WARNING) << "Segment already exists: " << segment.id;
-        return ErrorCode::SEGMENT_ALREADY_EXISTS;
+    // Update last ping time
+    it->second.last_ping = std::chrono::steady_clock::now();
+    
+    PingResponse response;
+    response.view_version = get_view_version();
+    response.client_status = ClientStatus::ACTIVE;
+    
+    return response;
+}
+
+// Emergency worker removal for cluster management
+ErrorCode KeystoneService::remove_worker(const std::string& worker_id) {
+    LOG(INFO) << "Manually removing worker from cluster: " << worker_id;
+    
+    // Remove from local tracking
+    {
+        std::unique_lock<std::shared_mutex> lock(worker_registry_mutex_);
+        auto worker_it = workers_.find(worker_id);
+        if (worker_it != workers_.end()) {
+            // Remove all segments owned by this worker
+            for (const auto& [segment_id, segment] : worker_it->second.chunks) {
+                std::unique_lock<std::shared_mutex> seg_lock(chunks_mutex_);
+                chunks_.erase(segment_id);
+            }
+            workers_.erase(worker_it);
+        }
     }
     
-    segments_[segment.id] = segment;
-    client_it->second.segments.push_back(segment.id);
+    // Remove heartbeat tracking
+    {
+        std::unique_lock<std::shared_mutex> heartbeat_lock(heartbeat_mutex_);
+        worker_heartbeats_.erase(worker_id);
+    }
     
-    LOG(INFO) << "Registered segment: " << segment.id << " from client " << client_id 
-              << " (size: " << segment.size << " bytes)";
+    // Remove from ETCD (this will trigger watchers)
+    if (etcd_) {
+        // TODO: Implement delete_key in EtcdService
+        // std::string worker_key = make_worker_key(worker_id);
+        // auto err = etcd_->delete_key(worker_key);
+        // if (err != ErrorCode::OK) {
+        //     LOG(WARNING) << "Failed to remove worker from ETCD: " << error::to_string(err);
+        // }
+        
+        // Also remove heartbeat
+        // std::string heartbeat_key = make_heartbeat_key(worker_id);
+        // etcd_->delete_key(heartbeat_key);  // Best effort, ignore errors
+        LOG(INFO) << "Worker removal from ETCD not implemented yet";
+    }
     
     increment_view_version();
+    LOG(INFO) << "Successfully removed worker: " << worker_id;
     return ErrorCode::OK;
 }
 
-ErrorCode KeystoneService::unregister_segment(const SegmentId& segment_id, const UUID& client_id) {
-    std::unique_lock<std::shared_mutex> segments_lock(segments_mutex_);
-    std::unique_lock<std::shared_mutex> clients_lock(clients_mutex_);
+// Get worker information
+ErrorCode KeystoneService::get_workers_info(std::vector<WorkerInfo>& workers) const {
+    std::shared_lock<std::shared_mutex> lock(worker_registry_mutex_);
     
-    auto segment_it = segments_.find(segment_id);
-    if (segment_it == segments_.end()) {
-        LOG(WARNING) << "Attempt to unregister unknown segment: " << segment_id;
-        return ErrorCode::SEGMENT_NOT_FOUND;
+    workers.clear();
+    workers.reserve(workers_.size());
+    
+    auto now = std::chrono::steady_clock::now();
+    auto ttl = std::chrono::seconds(config_.worker_heartbeat_ttl_sec);
+    
+    for (const auto& [worker_id, worker_info] : workers_) {
+        if (!worker_info.is_stale(ttl)) {
+            workers.push_back(worker_info);
+        }
     }
-    
-    auto client_it = clients_.find(client_id);
-    if (client_it != clients_.end()) {
-        auto& client_segments = client_it->second.segments;
-        client_segments.erase(
-            std::remove(client_segments.begin(), client_segments.end(), segment_id),
-            client_segments.end()
-        );
-    }
-    
-    segments_.erase(segment_it);
-    
-    LOG(INFO) << "Unregistered segment: " << segment_id << " from client " << client_id;
-    increment_view_version();
     
     return ErrorCode::OK;
 }
 
-ErrorCode KeystoneService::get_segments(std::vector<Segment>& segments) const {
-    std::shared_lock<std::shared_mutex> lock(segments_mutex_);
+// Segment Management - REMOVED: Workers register chunks directly to etcd  
+// Keystone only watches for changes and maintains read-only view
+
+ErrorCode KeystoneService::get_chunks(std::vector<Segment>& segments) const {
+    std::shared_lock<std::shared_mutex> lock(chunks_mutex_);
     
     segments.clear();
-    segments.reserve(segments_.size());
+    segments.reserve(chunks_.size());
     
-    for (const auto& [segment_id, segment] : segments_) {
+    for (const auto& [segment_id, segment] : chunks_) {
         segments.push_back(segment);
     }
     
@@ -404,7 +405,7 @@ std::vector<ErrorCode> KeystoneService::batch_put_cancel(const std::vector<Objec
 }
 
 // Metrics and status
-Result<KeystoneService::ClusterStats> KeystoneService::get_cluster_stats() const {
+Result<ClusterStats> KeystoneService::get_cluster_stats() const {
     ClusterStats stats;
     
     // Client statistics
@@ -424,10 +425,10 @@ Result<KeystoneService::ClusterStats> KeystoneService::get_cluster_stats() const
     
     // Segment statistics
     {
-        std::shared_lock<std::shared_mutex> lock(segments_mutex_);
-        stats.total_segments = segments_.size();
+        std::shared_lock<std::shared_mutex> lock(chunks_mutex_);
+        stats.total_segments = chunks_.size();
         
-        for (const auto& [segment_id, segment] : segments_) {
+        for (const auto& [segment_id, segment] : chunks_) {
             stats.total_capacity += segment.size;
             stats.used_capacity += segment.used;
         }
@@ -511,6 +512,7 @@ void KeystoneService::run_health_checks() {
         
         try {
             cleanup_stale_clients();
+            cleanup_stale_workers();
             evict_objects_if_needed();
         } catch (const std::exception& e) {
             LOG(ERROR) << "Exception in health checks: " << e.what();
@@ -543,39 +545,68 @@ ErrorCode KeystoneService::allocate_workers(const ObjectKey& key, size_t data_si
                                           const WorkerConfig& config,
                                           std::vector<WorkerPlacement>& workers) {
     workers.clear();
-    workers.reserve(config.worker_count);
     
-    std::shared_lock<std::shared_mutex> segments_lock(segments_mutex_);
-    
-    if (segments_.empty()) {
-        LOG(ERROR) << "No segments available for worker allocation";
-        return ErrorCode::SEGMENT_NOT_FOUND;
+    // Validate input parameters
+    if (config.worker_count == 0) {
+        LOG(ERROR) << "Worker count cannot be zero";
+        return ErrorCode::INVALID_PARAMETERS;
     }
     
-    size_t segment_idx = 0;
+    if (data_size == 0) {
+        LOG(ERROR) << "Data size cannot be zero";
+        return ErrorCode::INVALID_PARAMETERS;
+    }
+    
+    workers.reserve(config.worker_count);
+    
+    // Thread-safe copy of segments to avoid iterator invalidation
+    std::vector<Segment> available_segments;
+    {
+        std::shared_lock<std::shared_mutex> segments_lock(chunks_mutex_);
+        if (chunks_.empty()) {
+            LOG(ERROR) << "No segments available for worker allocation";
+            return ErrorCode::SEGMENT_NOT_FOUND;
+        }
+        
+        // Copy segments to avoid holding lock during allocation
+        available_segments.reserve(chunks_.size());
+        for (const auto& [id, segment] : chunks_) {
+            available_segments.push_back(segment);
+        }
+    }
+    
+    // Calculate data distribution
+    size_t chunk_size = data_size / config.worker_count;
+    size_t remainder = data_size % config.worker_count;
+    size_t current_offset = 0;
+    
     for (size_t i = 0; i < config.worker_count; ++i) {
         WorkerPlacement placement;
         placement.status = WorkerStatus::ALLOCATED;
         
-        auto segment_it = segments_.begin();
-        std::advance(segment_it, segment_idx % segments_.size());
-        placement.node_id = segment_it->second.node_id;
+        // Round-robin segment selection
+        const auto& segment = available_segments[i % available_segments.size()];
+        placement.node_id = segment.node_id;
+        
+        // Calculate this worker's data size (distribute remainder among first workers)
+        size_t this_worker_size = chunk_size + (i < remainder ? 1 : 0);
         
         MemoryPlacement mem;
         UcxRegion region;
-        region.worker_address = segment_it->second.ucx_address;
+        region.worker_address = segment.ucx_address;
         region.remote_key = 0;
-        region.remote_addr = segment_it->second.base_addr;
-        region.size = data_size;
+        region.remote_addr = segment.base_addr + current_offset; // CRITICAL: Offset to avoid overlap
+        region.size = this_worker_size;
         mem.kind = MemoryKind::CPU_DRAM;
         mem.regions.push_back(region);
         placement.storage = mem;
         
         workers.push_back(placement);
-        segment_idx++;
+        current_offset += this_worker_size;
     }
     
-    LOG(INFO) << "Allocated " << workers.size() << " workers for key: " << key;
+    LOG(INFO) << "Allocated " << workers.size() << " workers for key: " << key 
+              << " (total_size: " << data_size << ", chunk_size: " << chunk_size << ")";
     return ErrorCode::OK;
 }
 
@@ -642,6 +673,478 @@ ViewVersionId KeystoneService::increment_view_version() {
 
 std::string KeystoneService::make_etcd_key(const std::string& suffix) const {
     return "/blackbird/clusters/" + config_.cluster_id + "/" + suffix;
+}
+
+std::string KeystoneService::make_worker_key(const std::string& worker_id) const {
+    return workers_prefix() + worker_id;
+}
+
+std::string KeystoneService::make_worker_chunk_key(const std::string& worker_id, const std::string& chunk_id) const {
+    return workers_prefix() + worker_id + "/chunks/" + chunk_id;
+}
+
+std::string KeystoneService::make_heartbeat_key(const std::string& worker_id) const {
+    return heartbeat_prefix() + worker_id;
+}
+
+// === Worker registry watchers ===
+void KeystoneService::watch_worker_registry_namespace() {
+    if (!etcd_) return;
+    auto prefix = workers_prefix();
+    auto cb = [this](const std::string& key, const std::string& value, bool is_delete) {
+        // Determine if this is a worker registration or chunk registration
+        auto workers_len = workers_prefix().length();
+        if (key.length() <= workers_len) return;
+        
+        std::string suffix = key.substr(workers_len);
+        auto chunk_pos = suffix.find("/chunks/");
+        
+        if (chunk_pos != std::string::npos) {
+            // This is a chunk registration: /workers/<worker_id>/chunks/<chunk_id>
+            if (!is_delete) {
+                upsert_worker_chunk_from_json(key, value);
+            } else {
+                remove_worker_chunk_by_key(key);
+            }
+        } else {
+            // This is a worker registration: /workers/<worker_id>
+            if (!is_delete) {
+                upsert_worker_from_json(key, value);
+            } else {
+                remove_worker_by_key(key);
+            }
+        }
+    };
+    
+    auto err = etcd_->watch_prefix(prefix, cb);
+    if (err != ErrorCode::OK) {
+        LOG(ERROR) << "Failed to attach worker registry watcher on prefix: " << prefix;
+    } else {
+        LOG(INFO) << "Watching worker registry prefix: " << prefix;
+    }
+}
+
+void KeystoneService::watch_heartbeat_namespace() {
+    if (!etcd_) return;
+    auto prefix = heartbeat_prefix();
+    auto cb = [this](const std::string& key, const std::string& value, bool is_delete) {
+        if (!is_delete) {
+            update_worker_heartbeat(key, value);
+        }
+        // Note: we don't remove heartbeats on delete; they'll age out naturally
+    };
+    
+    auto err = etcd_->watch_prefix(prefix, cb);
+    if (err != ErrorCode::OK) {
+        LOG(ERROR) << "Failed to attach heartbeat watcher on prefix: " << prefix;
+    } else {
+        LOG(INFO) << "Watching heartbeat prefix: " << prefix;
+    }
+}
+
+void KeystoneService::upsert_worker_from_json(const std::string& key, const std::string& json_value) {
+    try {
+        auto doc = nlohmann::json::parse(json_value);
+        
+        // Extract worker_id from key: /workers/<worker_id>
+        auto pos = key.rfind('/');
+        if (pos == std::string::npos || pos + 1 >= key.size()) return;
+        std::string worker_id = key.substr(pos + 1);
+        
+        WorkerInfo info;
+        info.worker_id = worker_id;
+        info.node_id = doc.value("node_id", std::string{});
+        info.endpoint = doc.value("endpoint", std::string{});
+        info.last_heartbeat = std::chrono::steady_clock::now();
+        
+        {
+            std::unique_lock<std::shared_mutex> lock(worker_registry_mutex_);
+            workers_[worker_id] = std::move(info);
+        }
+        
+        increment_view_version();
+        LOG(INFO) << "Registered worker: " << worker_id << " at " << info.endpoint;
+        
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Failed to parse worker JSON from etcd (key=" << key << "): " << e.what();
+    }
+}
+
+void KeystoneService::remove_worker_by_key(const std::string& key) {
+    auto pos = key.rfind('/');
+    if (pos == std::string::npos || pos + 1 >= key.size()) return;
+    std::string worker_id = key.substr(pos + 1);
+    
+    {
+        std::unique_lock<std::shared_mutex> lock(worker_registry_mutex_);
+        workers_.erase(worker_id);
+    }
+    
+    increment_view_version();
+    LOG(INFO) << "Removed worker: " << worker_id;
+}
+
+void KeystoneService::upsert_worker_chunk_from_json(const std::string& key, const std::string& json_value) {
+    try {
+        auto doc = nlohmann::json::parse(json_value);
+        
+        // Extract worker_id and chunk_id from key: /workers/<worker_id>/chunks/<chunk_id>
+        auto workers_len = workers_prefix().length();
+        if (key.length() <= workers_len) return;
+        
+        std::string suffix = key.substr(workers_len);
+        auto chunk_pos = suffix.find("/chunks/");
+        if (chunk_pos == std::string::npos) return;
+        
+        std::string worker_id = suffix.substr(0, chunk_pos);
+        std::string chunk_id = suffix.substr(chunk_pos + 8); // 8 = strlen("/chunks/")
+        
+        // Parse segment metadata using Mooncake's segment schema
+        Segment seg;
+        seg.id = doc.value("id", chunk_id); // fallback to chunk_id if not specified
+        seg.node_id = doc.value("node_id", std::string{});
+        seg.base_addr = doc.value("base_addr", static_cast<uintptr_t>(0));
+        seg.size = doc.value("size", static_cast<size_t>(0));
+        seg.used = doc.value("used", static_cast<size_t>(0));
+        auto addr_vec = doc.value("ucx_address", std::vector<uint8_t>{});
+        seg.ucx_address = addr_vec;
+        
+        {
+            std::unique_lock<std::shared_mutex> lock(worker_registry_mutex_);
+            auto worker_it = workers_.find(worker_id);
+            if (worker_it != workers_.end()) {
+                worker_it->second.chunks[chunk_id] = seg;
+            }
+        }
+        
+        // Also update the global segments map for compatibility
+        {
+            std::unique_lock<std::shared_mutex> seg_lock(chunks_mutex_);
+            chunks_[seg.id] = seg;
+        }
+        
+        increment_view_version();
+        LOG(INFO) << "Registered chunk: " << chunk_id << " for worker " << worker_id 
+                  << " (size: " << seg.size << " bytes)";
+                  
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Failed to parse worker chunk JSON from etcd (key=" << key << "): " << e.what();
+    }
+}
+
+void KeystoneService::remove_worker_chunk_by_key(const std::string& key) {
+    // Extract worker_id and chunk_id from key
+    auto workers_len = workers_prefix().length();
+    if (key.length() <= workers_len) return;
+    
+    std::string suffix = key.substr(workers_len);
+    auto chunk_pos = suffix.find("/chunks/");
+    if (chunk_pos == std::string::npos) return;
+    
+    std::string worker_id = suffix.substr(0, chunk_pos);
+    std::string chunk_id = suffix.substr(chunk_pos + 8);
+    
+    {
+        std::unique_lock<std::shared_mutex> lock(worker_registry_mutex_);
+        auto worker_it = workers_.find(worker_id);
+        if (worker_it != workers_.end()) {
+            worker_it->second.chunks.erase(chunk_id);
+        }
+    }
+    
+    // Also remove from global segments map
+    {
+        std::unique_lock<std::shared_mutex> seg_lock(chunks_mutex_);
+        chunks_.erase(chunk_id);
+    }
+    
+    increment_view_version();
+    LOG(INFO) << "Removed chunk: " << chunk_id << " from worker " << worker_id;
+}
+
+// === Client registry watchers ===
+void KeystoneService::watch_clients_namespace() {
+    if (!etcd_) return;
+    auto prefix = clients_prefix();
+    auto cb = [this](const std::string& key, const std::string& value, bool is_delete) {
+        if (!is_delete) {
+            upsert_client_from_json(key, value);
+        } else {
+            remove_client_by_key(key);
+        }
+    };
+    
+    auto err = etcd_->watch_prefix(prefix, cb);
+    if (err != ErrorCode::OK) {
+        LOG(ERROR) << "Failed to attach client watcher on prefix: " << prefix;
+    } else {
+        LOG(INFO) << "Watching client prefix: " << prefix;
+    }
+}
+
+void KeystoneService::watch_chunks_namespace() {
+    if (!etcd_) return;
+    auto prefix = chunks_prefix();
+    auto cb = [this](const std::string& key, const std::string& value, bool is_delete) {
+        if (!is_delete) {
+            upsert_chunk_from_json(key, value);
+        } else {
+            remove_chunk_by_key(key);
+        }
+    };
+    
+    auto err = etcd_->watch_prefix(prefix, cb);
+    if (err != ErrorCode::OK) {
+        LOG(ERROR) << "Failed to attach chunk watcher on prefix: " << prefix;
+    } else {
+        LOG(INFO) << "Watching chunk prefix: " << prefix;
+    }
+}
+
+void KeystoneService::upsert_client_from_json(const std::string& key, const std::string& json_value) {
+    try {
+        auto doc = nlohmann::json::parse(json_value);
+        
+        // Extract client_id from key: /clients/<client_id>
+        auto pos = key.rfind('/');
+        if (pos == std::string::npos || pos + 1 >= key.size()) {
+            LOG(WARNING) << "Invalid client key format: " << key;
+            return;
+        }
+        std::string client_id_str = key.substr(pos + 1);
+        
+        // Parse UUID from string (format: "high-low")
+        auto dash_pos = client_id_str.find('-');
+        if (dash_pos == std::string::npos) {
+            LOG(WARNING) << "Invalid client UUID format (missing dash): " << client_id_str;
+            return;
+        }
+        
+        UUID client_id;
+        try {
+            client_id.first = std::stoull(client_id_str.substr(0, dash_pos));
+            client_id.second = std::stoull(client_id_str.substr(dash_pos + 1));
+        } catch (const std::exception& e) {
+            LOG(ERROR) << "Failed to parse client UUID from key: " << client_id_str << " - " << e.what();
+            return;
+        }
+        
+        // Validate required fields
+        if (!doc.contains("node_id") || !doc.contains("endpoint")) {
+            LOG(WARNING) << "Client JSON missing required fields (node_id, endpoint): " << key;
+            return;
+        }
+        
+        ClientInfo info;
+        info.client_id = client_id;
+        info.node_id = doc.value("node_id", std::string{});
+        info.endpoint = doc.value("endpoint", std::string{});
+        info.last_ping = std::chrono::steady_clock::now();
+        
+        {
+            std::unique_lock<std::shared_mutex> lock(clients_mutex_);
+            clients_[client_id] = std::move(info);
+        }
+        
+        increment_view_version();
+        LOG(INFO) << "Registered client from etcd: " << client_id << " (" << info.node_id << ") at " << info.endpoint;
+        
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Failed to parse client JSON from etcd (key=" << key << "): " << e.what();
+    }
+}
+
+void KeystoneService::remove_client_by_key(const std::string& key) {
+    auto pos = key.rfind('/');
+    if (pos == std::string::npos || pos + 1 >= key.size()) return;
+    std::string client_id_str = key.substr(pos + 1);
+    
+    // Parse UUID from string
+    auto dash_pos = client_id_str.find('-');
+    if (dash_pos == std::string::npos) return;
+    
+    UUID client_id;
+    try {
+        client_id.first = std::stoull(client_id_str.substr(0, dash_pos));
+        client_id.second = std::stoull(client_id_str.substr(dash_pos + 1));
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Failed to parse client UUID for removal: " << client_id_str;
+        return;
+    }
+    
+    {
+        std::unique_lock<std::shared_mutex> lock(clients_mutex_);
+        clients_.erase(client_id);
+    }
+    
+    increment_view_version();
+    LOG(INFO) << "Removed client from etcd: " << client_id;
+}
+
+void KeystoneService::upsert_chunk_from_json(const std::string& key, const std::string& json_value) {
+    try {
+        auto doc = nlohmann::json::parse(json_value);
+        
+        // Extract segment_id from key: /segments/<segment_id>
+        auto pos = key.rfind('/');
+        if (pos == std::string::npos || pos + 1 >= key.size()) return;
+        std::string segment_id = key.substr(pos + 1);
+        
+        Segment seg;
+        seg.id = doc.value("id", segment_id);
+        seg.node_id = doc.value("node_id", std::string{});
+        seg.base_addr = doc.value("base_addr", static_cast<uintptr_t>(0));
+        seg.size = doc.value("size", static_cast<size_t>(0));
+        seg.used = doc.value("used", static_cast<size_t>(0));
+        auto addr_vec = doc.value("ucx_address", std::vector<uint8_t>{});
+        seg.ucx_address = addr_vec;
+        
+        {
+            std::unique_lock<std::shared_mutex> lock(chunks_mutex_);
+            chunks_[seg.id] = seg;
+        }
+        
+        increment_view_version();
+        LOG(INFO) << "Registered segment from etcd: " << seg.id << " (" << seg.node_id << ") size: " << seg.size;
+        
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Failed to parse segment JSON from etcd (key=" << key << "): " << e.what();
+    }
+}
+
+void KeystoneService::remove_chunk_by_key(const std::string& key) {
+    auto pos = key.rfind('/');
+    if (pos == std::string::npos || pos + 1 >= key.size()) return;
+    std::string chunk_id = key.substr(pos + 1);
+    
+    {
+        std::unique_lock<std::shared_mutex> lock(chunks_mutex_);
+        chunks_.erase(chunk_id);
+    }
+    
+    increment_view_version();
+    LOG(INFO) << "Removed chunk from etcd: " << chunk_id;
+}
+
+void KeystoneService::update_worker_heartbeat(const std::string& key, const std::string& json_value) {
+    try {
+        // Extract worker_id from key: /heartbeat/<worker_id>
+        auto pos = key.rfind('/');
+        if (pos == std::string::npos || pos + 1 >= key.size()) return;
+        std::string worker_id = key.substr(pos + 1);
+        
+        auto now = std::chrono::steady_clock::now();
+        
+        // Update heartbeat timestamp
+        {
+            std::unique_lock<std::shared_mutex> lock(heartbeat_mutex_);
+            worker_heartbeats_[worker_id] = now;
+        }
+        
+        // Also update worker's last_heartbeat if it exists
+        {
+            std::unique_lock<std::shared_mutex> lock(worker_registry_mutex_);
+            auto worker_it = workers_.find(worker_id);
+            if (worker_it != workers_.end()) {
+                worker_it->second.last_heartbeat = now;
+            }
+        }
+        
+        VLOG(2) << "Updated heartbeat for worker: " << worker_id;
+        
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Failed to parse heartbeat JSON from etcd (key=" << key << "): " << e.what();
+    }
+}
+
+void KeystoneService::cleanup_stale_workers() {
+    std::unique_lock<std::shared_mutex> lock(worker_registry_mutex_);
+    
+    auto now = std::chrono::steady_clock::now();
+    auto ttl = std::chrono::seconds(config_.worker_heartbeat_ttl_sec);
+    
+    auto it = workers_.begin();
+    while (it != workers_.end()) {
+        if (it->second.is_stale(ttl)) {
+            LOG(INFO) << "Removing stale worker: " << it->first << " (" << it->second.node_id << ")";
+            it = workers_.erase(it);
+            increment_view_version();
+        } else {
+            ++it;
+        }
+    }
+}
+
+void KeystoneService::load_existing_state_from_etcd() {
+    if (!etcd_) {
+        LOG(WARNING) << "Etcd not initialized, cannot load existing state.";
+        return;
+    }
+
+    // Load clients
+    std::vector<std::string> client_keys, client_values;
+    auto err = etcd_->get_with_prefix(clients_prefix(), client_keys, client_values);
+    if (err == ErrorCode::OK) {
+        for (size_t i = 0; i < client_keys.size(); ++i) {
+            upsert_client_from_json(client_keys[i], client_values[i]);
+        }
+        LOG(INFO) << "Loaded " << client_keys.size() << " clients from etcd.";
+    } else {
+        LOG(WARNING) << "Failed to load clients from etcd: " << error::to_string(err);
+    }
+
+    // Load segments  
+    std::vector<std::string> segment_keys, segment_values;
+    err = etcd_->get_with_prefix(chunks_prefix(), segment_keys, segment_values);
+    if (err == ErrorCode::OK) {
+        for (size_t i = 0; i < segment_keys.size(); ++i) {
+            upsert_chunk_from_json(segment_keys[i], segment_values[i]);
+        }
+        LOG(INFO) << "Loaded " << segment_keys.size() << " segments from etcd.";
+    } else {
+        LOG(WARNING) << "Failed to load segments from etcd: " << error::to_string(err);
+    }
+
+    // Load workers and worker chunks
+    std::vector<std::string> worker_keys, worker_values;
+    err = etcd_->get_with_prefix(workers_prefix(), worker_keys, worker_values);
+    if (err == ErrorCode::OK) {
+        for (size_t i = 0; i < worker_keys.size(); ++i) {
+            const std::string& key = worker_keys[i];
+            const std::string& value = worker_values[i];
+            
+            // Check if this is a chunk or worker registration
+            if (key.find("/chunks/") != std::string::npos) {
+                upsert_worker_chunk_from_json(key, value);
+            } else {
+                upsert_worker_from_json(key, value);
+            }
+        }
+        LOG(INFO) << "Loaded " << worker_keys.size() << " worker entries from etcd.";
+    } else {
+        LOG(WARNING) << "Failed to load workers from etcd: " << error::to_string(err);
+    }
+
+    // Load worker heartbeats
+    std::vector<std::string> heartbeat_keys, heartbeat_values;
+    err = etcd_->get_with_prefix(heartbeat_prefix(), heartbeat_keys, heartbeat_values);
+    if (err == ErrorCode::OK) {
+        for (size_t i = 0; i < heartbeat_keys.size(); ++i) {
+            update_worker_heartbeat(heartbeat_keys[i], heartbeat_values[i]);
+        }
+        LOG(INFO) << "Loaded " << heartbeat_keys.size() << " worker heartbeats from etcd.";
+    } else {
+        LOG(WARNING) << "Failed to load worker heartbeats from etcd: " << error::to_string(err);
+    }
+}
+
+void KeystoneService::setup_watcher_with_error_handling(const std::string& watcher_name, const std::function<void()>& watcher_func) {
+    try {
+        watcher_func();
+        LOG(INFO) << "Successfully set up " << watcher_name << " watcher.";
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Failed to set up " << watcher_name << " watcher: " << e.what();
+    }
 }
 
 }  // namespace blackbird 

@@ -59,38 +59,7 @@ public:
     bool is_running() const noexcept { return running_.load(); }
     
     // === RPC Methods (exposed to clients) ===
-    
-    /**
-     * @brief Ping method for client heartbeat
-     * @param client_id Client UUID
-     * @return PingResponse with view version and client status
-     */
-    Result<PingResponse> ping(const UUID& client_id);
-    
-    /**
-     * @brief Register a client
-     * @param client_id Client UUID
-     * @param node_id Node identifier
-     * @param endpoint Client endpoint
-     * @return ErrorCode result
-     */
-    ErrorCode register_client(const UUID& client_id, const NodeId& node_id, const std::string& endpoint);
-    
-    /**
-     * @brief Register a memory segment
-     * @param segment Segment information
-     * @param client_id Client UUID
-     * @return ErrorCode result
-     */
-    ErrorCode register_segment(const Segment& segment, const UUID& client_id);
-    
-    /**
-     * @brief Unregister a memory segment
-     * @param segment_id Segment identifier
-     * @param client_id Client UUID
-     * @return ErrorCode result
-     */
-    ErrorCode unregister_segment(const SegmentId& segment_id, const UUID& client_id);
+    // NOTE: Client/worker registration happens directly to etcd, not through RPC
     
     /**
      * @brief Check if an object exists
@@ -190,9 +159,8 @@ public:
     
     /**
      * @brief Get cluster statistics
-     * @return Cluster statistics
      */
-    Result<KeystoneService::ClusterStats> get_cluster_stats();
+    Result<ClusterStats> get_cluster_stats();
     
     /**
      * @brief Get current view version

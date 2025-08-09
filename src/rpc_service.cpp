@@ -63,35 +63,11 @@ void RpcService::stop() {
     LOG(INFO) << "RpcService stopped";
 }
 
-// RPC method implementations - these delegate to the keystone service
-Result<PingResponse> RpcService::ping(const UUID& client_id) {
-    return handle_service_call<PingResponse>([&]() {
-        return keystone_service_->ping_client(client_id);
-    });
-}
-
-ErrorCode RpcService::register_client(const UUID& client_id, const NodeId& node_id, const std::string& endpoint) {
-    return handle_service_call([&]() {
-        return keystone_service_->register_client(client_id, node_id, endpoint);
-    });
-}
-
-ErrorCode RpcService::register_segment(const Segment& segment, const UUID& client_id) {
-    return handle_service_call([&]() {
-        return keystone_service_->register_segment(segment, client_id);
-    });
-}
-
-ErrorCode RpcService::unregister_segment(const SegmentId& segment_id, const UUID& client_id) {
-    return handle_service_call([&]() {
-        return keystone_service_->unregister_segment(segment_id, client_id);
-    });
-}
+// RPC Methods - REMOVED client/segment registration
+// Clients and workers register directly to etcd, not through Keystone RPC
 
 Result<bool> RpcService::object_exists(const ObjectKey& key) {
-    return handle_service_call<bool>([&]() {
-        return keystone_service_->object_exists(key);
-    });
+    return handle_service_call<bool>([&]() { return keystone_service_->object_exists(key); });
 }
 
 Result<std::vector<WorkerPlacement>> RpcService::get_workers(const ObjectKey& key) {
@@ -182,8 +158,8 @@ std::vector<ErrorCode> RpcService::batch_put_cancel(const std::vector<ObjectKey>
 }
 
 // Admin/Monitoring methods
-Result<KeystoneService::ClusterStats> RpcService::get_cluster_stats() {
-    return handle_service_call<KeystoneService::ClusterStats>([&]() {
+Result<ClusterStats> RpcService::get_cluster_stats() {
+    return handle_service_call<ClusterStats>([&]() {
         return keystone_service_->get_cluster_stats();
     });
 }

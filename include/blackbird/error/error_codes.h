@@ -8,7 +8,7 @@ namespace blackbird {
 namespace error {
 
 /**
- * @brief Comprehensive error code enumeration for the blackbird system
+ * @brief Comprehensive error code enumeration for blackbird
  * 
  * Error codes are organized by domain, with each domain having a 1000-number range.
  */

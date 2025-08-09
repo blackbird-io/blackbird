@@ -252,10 +252,11 @@ struct KeystoneConfig {
     double eviction_ratio{DEFAULT_EVICTION_RATIO};
     double high_watermark{DEFAULT_HIGH_WATERMARK};
     int64_t client_ttl_sec{DEFAULT_CLIENT_TTL_SEC};
+    int64_t worker_heartbeat_ttl_sec{30};  // Worker considered stale after 30s without heartbeat
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(KeystoneConfig, cluster_id, etcd_endpoints, listen_address,
                                    http_metrics_port, enable_gc, enable_ha, eviction_ratio,
-                                   high_watermark, client_ttl_sec)
+                                   high_watermark, client_ttl_sec, worker_heartbeat_ttl_sec)
 };
 
 /**

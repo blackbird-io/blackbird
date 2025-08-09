@@ -15,7 +15,6 @@
 
 using namespace blackbird;
 
-// Global flag for graceful shutdown
 volatile bool g_running = true;
 
 void signal_handler(int signal) {
@@ -41,7 +40,6 @@ int main(int argc, char* argv[]) {
     google::InitGoogleLogging(argv[0]);
     google::SetStderrLogging(google::GLOG_INFO);
     
-    // Setup signal handlers for graceful shutdown
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
     
@@ -52,7 +50,7 @@ int main(int argc, char* argv[]) {
     config.http_metrics_port = "9091";
     config.cluster_id = "blackbird_cluster";
     config.enable_gc = true;
-    config.enable_ha = true;  // Enable high availability with etcd
+    config.enable_ha = true;
     
     // Parse command line arguments
     for (int i = 1; i < argc; ++i) {
@@ -86,7 +84,6 @@ int main(int argc, char* argv[]) {
     LOG(INFO) << "  Enable HA: " << (config.enable_ha ? "true" : "false");
     
     try {
-        // Test etcd connectivity first
         LOG(INFO) << "Testing etcd connectivity...";
         EtcdService etcd_test(config.etcd_endpoints);
         auto err = etcd_test.connect();
@@ -132,7 +129,6 @@ int main(int argc, char* argv[]) {
         while (g_running) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
             
-            // Periodically log cluster status
             static int status_counter = 0;
             if (++status_counter >= 60) {  // Every 60 seconds
                 status_counter = 0;
