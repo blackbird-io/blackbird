@@ -2,7 +2,7 @@
 
 #include <glog/logging.h>
 
-#include <etcd/Client.hpp>
+#include <etcd/SyncClient.hpp>
 #include <etcd/KeepAlive.hpp>
 #include <etcd/Watcher.hpp>
 
@@ -10,7 +10,7 @@ namespace blackbird {
 
 // Implementation details
 struct EtcdService::Impl {
-    std::unique_ptr<etcd::Client> client;
+    std::unique_ptr<etcd::SyncClient> client;
     std::unordered_map<std::string, std::unique_ptr<etcd::Watcher>> watchers;
     std::unordered_map<EtcdLeaseId, std::unique_ptr<etcd::KeepAlive>> keep_alives;
     std::vector<std::string> endpoint_list;
@@ -48,9 +48,16 @@ EtcdService::EtcdService(const std::string& endpoints)
 }
 
 EtcdService::~EtcdService() {
-    // Cleanup watches and keep-alives
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    // Cleanup watches and keep-alives first
     impl_->watchers.clear();
     impl_->keep_alives.clear();
+    
+    // Reset connection state
+    connected_ = false;
+    
+    // Client will be automatically cleaned up when impl_ is destroyed
 }
 
 ErrorCode EtcdService::connect() {
@@ -62,9 +69,8 @@ ErrorCode EtcdService::connect() {
     }
     
     try {
-        // Create etcd client with the list of endpoints
-        client_.reset();
-        impl_->client = std::make_unique<etcd::Client>(impl_->endpoint_list);
+        // Create etcd sync client with the first endpoint
+        impl_->client = std::make_unique<etcd::SyncClient>(impl_->endpoint_list.front());
         
         // Test connection with a simple operation
         auto response = impl_->client->head();
@@ -94,11 +100,12 @@ ErrorCode EtcdService::get(const std::string& key, std::string& value) {
             return ErrorCode::ETCD_KEY_NOT_FOUND;
         }
         
-        if (response.value().empty()) {
+        std::string v = response.value().as_string();
+        if (v.empty()) {
             return ErrorCode::ETCD_KEY_NOT_FOUND;
         }
         
-        value = response.value().as_string();
+        value = std::move(v);
         return ErrorCode::OK;
         
     } catch (const std::exception& e) {
@@ -250,15 +257,44 @@ ErrorCode EtcdService::revoke_lease(EtcdLeaseId lease_id) {
     }
 }
 
-// Placeholder implementations for other methods
 ErrorCode EtcdService::watch_key(const std::string& key, EtcdWatchCallback callback) {
     LOG(WARNING) << "watch_key not yet implemented";
     return ErrorCode::ETCD_ERROR;
 }
 
 ErrorCode EtcdService::watch_prefix(const std::string& prefix, EtcdWatchCallback callback) {
-    LOG(WARNING) << "watch_prefix not yet implemented";
-    return ErrorCode::ETCD_ERROR;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!connected_) return ErrorCode::ETCD_ERROR;
+    
+    try {
+        // Create a watcher for the prefix with callback and recursive=true
+        auto watcher_callback = [callback, prefix](etcd::Response response) {
+            if (response.is_ok()) {
+                for (size_t i = 0; i < response.events().size(); ++i) {
+                    const auto& event = response.events()[i];
+                    std::string key = event.kv().key();
+                    std::string value = event.kv().as_string(); // Use as_string() method
+                    bool is_delete = (event.event_type() == etcd::Event::EventType::DELETE_); // Use DELETE_ not DELETE
+                    
+                    callback(key, value, is_delete);
+                }
+            } else {
+                LOG(ERROR) << "Watch error for prefix '" << prefix << "': " << response.error_message();
+            }
+        };
+        
+        auto watcher = std::make_unique<etcd::Watcher>(*impl_->client, prefix, watcher_callback, true); // true for recursive/prefix watch
+        
+        // Store the watcher to keep it alive
+        impl_->watchers[prefix] = std::move(watcher);
+        
+        LOG(INFO) << "Started watching prefix: " << prefix;
+        return ErrorCode::OK;
+        
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Exception while setting up watch for prefix '" << prefix << "': " << e.what();
+        return ErrorCode::ETCD_ERROR;
+    }
 }
 
 ErrorCode EtcdService::unwatch_key(const std::string& key) {

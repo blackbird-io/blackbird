@@ -1,10 +1,10 @@
+# This directory is reserved for future blackbird executables
 # Executables CMakeLists.txt
 
-# This directory is reserved for future blackbird executables
-# For now, examples are in the ../examples directory
+# Future production executables will be defined here
+# Planned executables:
+# - blackbird-keystone (production keystone service)
+# - blackbird-worker (worker node service)
+# - blackbird-client (client tools and utilities)
 
-# Future executables might include:
-# - blackbird-master (production master service)
-# - blackbird-client (standalone client tool)
-# - blackbird-admin (administration tool)
-# - blackbird-benchmark (performance testing tool) 
+# For now, examples are built in the examples/ directory 

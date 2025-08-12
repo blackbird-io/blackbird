@@ -1,0 +1,43 @@
+# Build directories
+/build/
+/build-*/
+**/_deps/
+
+# In-source CMake artifacts 
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+Makefile
+compile_commands.json
+
+# Protobuf generated sources (should be generated in build tree)
+*.pb.cc
+*.pb.h
+
+*.log
+core
+core.*
+
+*.tmp
+*.swp
+*.swo
+*~
+
+# Coverage files
+*.gcda
+*.gcno
+*.gcov
+*.lcov
+coverage/
+
+# IDE/editor settings
+.vscode/
+.idea/
+*.iml
+.clangd/
+.cache/
+
+# OS files
+.DS_Store
+Thumbs.db 

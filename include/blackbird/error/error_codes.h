@@ -8,10 +8,9 @@ namespace blackbird {
 namespace error {
 
 /**
- * @brief Comprehensive error code enumeration for the blackbird system
+ * @brief Comprehensive error code enumeration for blackbird
  * 
  * Error codes are organized by domain, with each domain having a 1000-number range.
- * This allows for future expansion while maintaining clear categorization.
  */
 enum class ErrorCode : uint32_t {
     // Success domain (0-999)
@@ -55,9 +54,9 @@ enum class ErrorCode : uint32_t {
     OBJECT_NOT_FOUND = get_domain_base(Domain::DATA),
     OBJECT_ALREADY_EXISTS,
     INVALID_KEY,
-    INVALID_REPLICA,
-    REPLICA_NOT_READY,
-    NO_COMPLETE_REPLICA,
+    INVALID_WORKER,
+    WORKER_NOT_READY,
+    NO_COMPLETE_WORKER,
     DATA_CORRUPTION,
     CHECKSUM_MISMATCH,
     
@@ -120,6 +119,6 @@ std::string_view get_error_description(ErrorCode code) noexcept;
 // For backward compatibility and ease of use
 using ErrorCode = error::ErrorCode;
 inline bool is_ok(ErrorCode code) noexcept { return error::is_ok(code); }
-inline std::string_view to_string(ErrorCode code) noexcept { return error::to_string(code); }
+// inline std::string_view to_string(ErrorCode code) noexcept { return error::to_string(code); }
 
 } // namespace blackbird 

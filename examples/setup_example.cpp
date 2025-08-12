@@ -3,18 +3,18 @@
 #include <signal.h>
 #include <thread>
 #include <chrono>
+#include <iomanip>
 
 #include <glog/logging.h>
 #include <nlohmann/json.hpp>
 
 #include "blackbird/types.h"
-#include "blackbird/master_service.h"
+#include "blackbird/keystone_service.h"
 #include "blackbird/rpc_service.h"
 #include "blackbird/etcd_service.h"
 
 using namespace blackbird;
 
-// Global flag for graceful shutdown
 volatile bool g_running = true;
 
 void signal_handler(int signal) {
@@ -40,18 +40,17 @@ int main(int argc, char* argv[]) {
     google::InitGoogleLogging(argv[0]);
     google::SetStderrLogging(google::GLOG_INFO);
     
-    // Setup signal handlers for graceful shutdown
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
     
     // Default configuration
-    MasterConfig config;
+    KeystoneConfig config;
     config.etcd_endpoints = "localhost:2379";
     config.listen_address = "0.0.0.0:9090";
     config.http_metrics_port = "9091";
     config.cluster_id = "blackbird_cluster";
     config.enable_gc = true;
-    config.enable_ha = true;  // Enable high availability with etcd
+    config.enable_ha = true;
     
     // Parse command line arguments
     for (int i = 1; i < argc; ++i) {
@@ -75,7 +74,7 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    LOG(INFO) << "Starting Blackbird Master Service";
+    LOG(INFO) << "Starting up Keystone Services";
     LOG(INFO) << "Configuration:";
     LOG(INFO) << "  Cluster ID: " << config.cluster_id;
     LOG(INFO) << "  Etcd Endpoints: " << config.etcd_endpoints;
@@ -85,81 +84,79 @@ int main(int argc, char* argv[]) {
     LOG(INFO) << "  Enable HA: " << (config.enable_ha ? "true" : "false");
     
     try {
-        // Test etcd connectivity first
         LOG(INFO) << "Testing etcd connectivity...";
         EtcdService etcd_test(config.etcd_endpoints);
         auto err = etcd_test.connect();
         if (err != ErrorCode::OK) {
-            LOG(ERROR) << "Failed to connect to etcd: " << toString(err);
+            LOG(ERROR) << "Failed to connect to etcd: " << error::to_string(err);
             LOG(ERROR) << "Please ensure etcd is running and accessible at: " << config.etcd_endpoints;
             return 1;
         }
         LOG(INFO) << "Etcd connectivity test passed";
         
-        // Create and initialize master service
-        LOG(INFO) << "Creating master service...";
-        auto master_service = std::make_shared<MasterService>(config);
+        // Create and initialize keystone service
+        LOG(INFO) << "Creating keystone service...";
+        auto keystone_service = std::make_shared<KeystoneService>(config);
         
-        err = master_service->initialize();
+        err = keystone_service->initialize();
         if (err != ErrorCode::OK) {
-            LOG(ERROR) << "Failed to initialize master service: " << toString(err);
+            LOG(ERROR) << "Failed to initialize keystone: " << error::to_string(err);
             return 1;
         }
         
-        err = master_service->start();
+        err = keystone_service->start();
         if (err != ErrorCode::OK) {
-            LOG(ERROR) << "Failed to start master service: " << toString(err);
+            LOG(ERROR) << "Failed to start keystone: " << error::to_string(err);
             return 1;
         }
         
         // Create and start RPC service
         LOG(INFO) << "Creating RPC service...";
-        auto rpc_service = std::make_shared<RpcService>(master_service, config);
+        auto rpc_service = std::make_shared<RpcService>(keystone_service, config);
         
         err = rpc_service->start();
         if (err != ErrorCode::OK) {
-            LOG(ERROR) << "Failed to start RPC service: " << toString(err);
+            LOG(ERROR) << "Failed to start RPC service: " << error::to_string(err);
             return 1;
         }
         
-        LOG(INFO) << "Blackbird Master Service started successfully";
+        LOG(INFO) << "Keystone started successfully";
         LOG(INFO) << "RPC server listening on: " << config.listen_address;
         LOG(INFO) << "HTTP metrics available on port: " << config.http_metrics_port;
         LOG(INFO) << "Press Ctrl+C to shutdown";
-        
+
         // Main service loop
         while (g_running) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
             
-            // Periodically log cluster status
             static int status_counter = 0;
             if (++status_counter >= 60) {  // Every 60 seconds
                 status_counter = 0;
                 
-                auto stats_result = master_service->get_cluster_stats();
+                auto stats_result = keystone_service->get_cluster_stats();
                 if (is_ok(stats_result)) {
                     auto stats = get_value(stats_result);
                     LOG(INFO) << "Cluster Status: "
-                              << "clients=" << stats.active_clients << "/"  << stats.total_clients
+                              << "workers=" << stats.active_workers << "/" << stats.total_workers
                               << ", segments=" << stats.total_segments
                               << ", objects=" << stats.total_objects
                               << ", utilization=" << std::fixed << std::setprecision(1) 
                               << (stats.utilization * 100.0) << "%";
                 } else {
-                    LOG(WARNING) << "Failed to get cluster stats: " << toString(get_error(stats_result));
+                    LOG(WARNING) << "Failed to get cluster stats: " << error::to_string(get_error(stats_result));
                 }
             }
         }
         
         LOG(INFO) << "Shutting down services...";
         rpc_service->stop();
-        master_service->stop();
+        keystone_service->stop();
         
     } catch (const std::exception& e) {
         LOG(ERROR) << "Exception in main: " << e.what();
         return 1;
     }
     
-    LOG(INFO) << "Blackbird Master Service shutdown complete";
+    LOG(INFO) << "Keystone Service shutdown complete";
     return 0;
 } 

@@ -13,11 +13,41 @@
 #include <glog/logging.h>
 #include <nlohmann/json.hpp>
 
+// YLT struct_pack support - included but not required for basic serialization
+// YLT struct_pack works with POD types by default
+#ifdef YLT_ENABLE_STRUCT_PACK
+#include <ylt/struct_pack.hpp>
+#endif
+
 #include "blackbird/error/error_codes.h"
 
 namespace blackbird {
 
-// Type aliases for improved readability and type safety
+/**
+ * @brief Result type for operations that can fail
+ */
+template<typename T>
+using Result = std::variant<T, ErrorCode>;
+
+/**
+ * @brief Simple expected-like helper for Result
+ */
+template<typename T>
+bool is_ok(const Result<T>& result) {
+    return std::holds_alternative<T>(result);
+}
+
+template<typename T>
+T get_value(const Result<T>& result) {
+    return std::get<T>(result);
+}
+
+template<typename T>
+ErrorCode get_error(const Result<T>& result) {
+    return std::get<ErrorCode>(result);
+}
+
+// === Type Aliases (Must be defined first) ===
 using ObjectKey = std::string;
 using Version = uint64_t;
 using SegmentId = std::string;  // Use string for better readability
@@ -34,176 +64,351 @@ using ViewVersionId = EtcdRevisionId;
 using EtcdLeaseId = int64_t;
 
 // Constants
-static constexpr uint64_t DEFAULT_REPLICA_COUNT = 1;
-static constexpr uint64_t DEFAULT_KV_TTL_MS = 30 * 60 * 1000;  // 30 minutes
-static constexpr double DEFAULT_EVICTION_RATIO = 0.1;
+static constexpr const char* DEFAULT_CLUSTER_ID = "blackbird_cluster";
 static constexpr double DEFAULT_HIGH_WATERMARK = 0.9;
 static constexpr int64_t DEFAULT_CLIENT_TTL_SEC = 10;
-static const std::string DEFAULT_CLUSTER_ID = "blackbird_cluster";
+static constexpr size_t DEFAULT_REPLICATION_FACTOR = 3;
+static constexpr size_t DEFAULT_MAX_WORKERS_PER_COPY = 4;
 
-// Utility function for UUID generation
-UUID generate_uuid();
-
-inline std::ostream& operator<<(std::ostream& os, const UUID& uuid) noexcept {
-    os << uuid.first << "-" << uuid.second;
-    return os;
-}
+// === Core Types for YLT struct_pack ===
 
 /**
- * @brief Status of a replica in the system
+ * @brief Storage class enumeration for YLT serialization
  */
-enum class ReplicaStatus {
-    UNDEFINED = 0,
-    ALLOCATED,     // Memory allocated, waiting for data
-    WRITING,       // Data transfer in progress
-    COMPLETE,      // Data transfer complete, replica ready
-    FAILED,        // Transfer failed or replica corrupted
-    REMOVED,       // Replica has been deleted
-};
-
-inline std::ostream& operator<<(std::ostream& os, const ReplicaStatus& status) noexcept {
-    static const std::unordered_map<ReplicaStatus, std::string_view> status_strings{
-        {ReplicaStatus::UNDEFINED, "UNDEFINED"},
-        {ReplicaStatus::ALLOCATED, "ALLOCATED"},
-        {ReplicaStatus::WRITING, "WRITING"},
-        {ReplicaStatus::COMPLETE, "COMPLETE"},
-        {ReplicaStatus::FAILED, "FAILED"},
-        {ReplicaStatus::REMOVED, "REMOVED"}
-    };
-    
-    auto it = status_strings.find(status);
-    os << (it != status_strings.end() ? it->second : "UNKNOWN");
-    return os;
-}
-
-/**
- * @brief Client status from master's perspective
- */
-enum class ClientStatus {
-    UNDEFINED = 0,
-    ACTIVE,        // Client is active and healthy
-    NEED_REFRESH,  // Client needs to refresh its view
-    STALE,         // Client hasn't pinged recently
-};
-
-inline std::ostream& operator<<(std::ostream& os, const ClientStatus& status) noexcept {
-    static const std::unordered_map<ClientStatus, std::string_view> status_strings{
-        {ClientStatus::UNDEFINED, "UNDEFINED"},
-        {ClientStatus::ACTIVE, "ACTIVE"},
-        {ClientStatus::NEED_REFRESH, "NEED_REFRESH"},
-        {ClientStatus::STALE, "STALE"}
-    };
-    
-    auto it = status_strings.find(status);
-    os << (it != status_strings.end() ? it->second : "UNKNOWN");
-    return os;
-}
-
-/**
- * @brief Represents a memory slice for data operations
- */
-struct Slice {
-    void* ptr{nullptr};
-    size_t size{0};
-    
-    Slice() = default;
-    Slice(void* p, size_t s) : ptr(p), size(s) {}
+enum class StorageClass : uint32_t {
+    STORAGE_UNSPECIFIED = 0,
+    RAM_CPU = 1,
+    RAM_GPU = 2, 
+    NVME = 3,
+    SSD = 4,
+    HDD = 5,
+    CUSTOM = 999
 };
 
 /**
- * @brief Configuration for replica placement and management
+ * @brief UCX endpoint information for RDMA communication
  */
-struct ReplicaConfig {
-    size_t replica_count{DEFAULT_REPLICA_COUNT};
-    bool enable_soft_pin{false};
-    std::string preferred_node{};  // Preferred node for primary replica
-    uint64_t ttl_ms{DEFAULT_KV_TTL_MS};
+struct UcxEndpoint {
+    std::string ip;
+    uint32_t port;
+    std::vector<uint8_t> worker_key;
+    std::vector<uint8_t> reserved;
+};
+
+/**
+ * @brief Memory location for RDMA access
+ */
+struct MemoryLocation {
+    uint64_t remote_addr;
+    uint32_t rkey;
+    uint64_t size;
+};
+
+/**
+ * @brief File location for disk storage
+ */
+struct FileLocation {
+    std::string file_path;
+    uint64_t file_offset;
+};
+
+/**
+ * @brief Location detail using variant for type safety
+ */
+using LocationDetail = std::variant<MemoryLocation, FileLocation>;
+
+/**
+ * @brief Shard placement information
+ */
+struct ShardPlacement {
+    std::string pool_id;
+    std::string worker_id;
+    UcxEndpoint endpoint;
+    StorageClass storage_class;
+    uint64_t length;
+    LocationDetail location;
+};
+
+/**
+ * @brief Copy placement containing multiple shards
+ */
+struct CopyPlacement {
+    uint32_t copy_index;
+    std::vector<ShardPlacement> shards;
     
-    // JSON serialization support
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(ReplicaConfig, replica_count, enable_soft_pin, preferred_node, ttl_ms)
+    size_t shards_size() const noexcept { return shards.size(); }
+};
+
+/**
+ * @brief Configuration for worker placement
+ */
+struct WorkerConfig {
+    size_t replication_factor{DEFAULT_REPLICATION_FACTOR};  // Number of copies of data (fault tolerance)
+    size_t max_workers_per_copy{DEFAULT_MAX_WORKERS_PER_COPY};                  // Max workers to shard each copy across
+    bool enable_soft_pin{false};                     // Enable soft pinning
+    std::string preferred_node{};                    // Preferred node for primary copy
+    std::vector<StorageClass> preferred_classes{};   // Preferred storage classes
+    uint64_t ttl_ms{30 * 60 * 1000};             // Time-to-live in milliseconds
     
-    friend std::ostream& operator<<(std::ostream& os, const ReplicaConfig& config) noexcept {
-        return os << "ReplicaConfig{replica_count=" << config.replica_count 
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(WorkerConfig, replication_factor, max_workers_per_copy, enable_soft_pin, preferred_node, preferred_classes, ttl_ms)
+
+    friend std::ostream& operator<<(std::ostream& os, const WorkerConfig& config) noexcept {
+        return os << "WorkerConfig{replication_factor=" << config.replication_factor
+                  << ", max_workers_per_copy=" << config.max_workers_per_copy
                   << ", enable_soft_pin=" << config.enable_soft_pin
                   << ", preferred_node=" << config.preferred_node
+                  << ", preferred_classes.size=" << config.preferred_classes.size()
                   << ", ttl_ms=" << config.ttl_ms << "}";
     }
 };
 
 /**
- * @brief UCX-specific buffer descriptor for remote memory access
+ * @brief Cluster statistics
  */
-struct UcxBufferDescriptor {
-    UcxAddress worker_address;  // UCX worker address
-    UcxRkey remote_key;         // UCX remote key for RDMA access
-    uintptr_t remote_addr;      // Remote memory address
-    size_t size;                // Buffer size
-    
-    // JSON serialization support
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(UcxBufferDescriptor, worker_address, remote_key, remote_addr, size)
+struct ClusterStats {
+    size_t total_workers{0};
+    size_t active_workers{0};
+    size_t total_segments{0};
+    size_t total_capacity{0};     // Total storage capacity in bytes
+    size_t used_capacity{0};      // Used storage capacity in bytes
+    size_t total_objects{0};      // Number of stored objects
+    double utilization{0.0};      // Overall cluster utilization (0.0-1.0)
+};
+
+// === RPC Request/Response Types (Direct KeystoneService Mapping) ===
+
+/**
+ * @brief Request to check if object exists
+ * Maps to: Result<bool> object_exists(const ObjectKey& key)
+ */
+struct ObjectExistsRequest {
+    ObjectKey key;
+};
+
+struct ObjectExistsResponse {
+    bool exists;
+    ErrorCode error_code{ErrorCode::OK};
 };
 
 /**
- * @brief Memory-based replica descriptor
+ * @brief Request to get worker locations for an object  
+ * Maps to: Result<std::vector<CopyPlacement>> get_workers(const ObjectKey& key)
  */
-struct MemoryDescriptor {
-    std::vector<UcxBufferDescriptor> buffers;
-    
-    // JSON serialization support
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(MemoryDescriptor, buffers)
+struct GetWorkersRequest {
+    ObjectKey key;
+};
+
+struct GetWorkersResponse {
+    std::vector<CopyPlacement> copies;
+    ErrorCode error_code{ErrorCode::OK};
 };
 
 /**
- * @brief Disk-based replica descriptor
+ * @brief Request to start a put operation
+ * Maps to: Result<std::vector<CopyPlacement>> put_start(const ObjectKey& key, size_t size, const WorkerConfig& config)
  */
-struct DiskDescriptor {
-    std::string file_path;
-    size_t file_size{0};
-    std::string node_id;  // Node where the file is stored
-    
-    // JSON serialization support
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DiskDescriptor, file_path, file_size, node_id)
+struct PutStartRequest {
+    ObjectKey key;
+    size_t data_size;
+    WorkerConfig config;
+};
+
+struct PutStartResponse {
+    std::vector<CopyPlacement> copies;
+    ErrorCode error_code{ErrorCode::OK};
 };
 
 /**
- * @brief Unified replica descriptor supporting both memory and disk storage
+ * @brief Request to complete a put operation
+ * Maps to: ErrorCode put_complete(const ObjectKey& key)
  */
-struct ReplicaDescriptor {
-    std::variant<MemoryDescriptor, DiskDescriptor> storage;
-    ReplicaStatus status{ReplicaStatus::UNDEFINED};
-    std::string node_id;  // Node hosting this replica
-    
-    // Helper methods
-    bool is_memory_replica() const noexcept {
-        return std::holds_alternative<MemoryDescriptor>(storage);
-    }
-    
-    bool is_disk_replica() const noexcept {
-        return std::holds_alternative<DiskDescriptor>(storage);
-    }
-    
-    const MemoryDescriptor& get_memory_descriptor() const {
-        return std::get<MemoryDescriptor>(storage);
-    }
-    
-    const DiskDescriptor& get_disk_descriptor() const {
-        return std::get<DiskDescriptor>(storage);
-    }
-    
-    MemoryDescriptor& get_memory_descriptor() {
-        return std::get<MemoryDescriptor>(storage);
-    }
-    
-    DiskDescriptor& get_disk_descriptor() {
-        return std::get<DiskDescriptor>(storage);
-    }
-    
-    // JSON serialization support
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(ReplicaDescriptor, storage, status, node_id)
+struct PutCompleteRequest {
+    ObjectKey key;
+};
+
+struct PutCompleteResponse {
+    ErrorCode error_code{ErrorCode::OK};
 };
 
 /**
- * @brief Represents a memory segment in the distributed cache
+ * @brief Request to cancel a put operation
+ * Maps to: ErrorCode put_cancel(const ObjectKey& key)
+ */
+struct PutCancelRequest {
+    ObjectKey key;
+};
+
+struct PutCancelResponse {
+    ErrorCode error_code{ErrorCode::OK};
+};
+
+/**
+ * @brief Request to remove an object
+ * Maps to: ErrorCode remove_object(const ObjectKey& key)
+ */
+struct RemoveObjectRequest {
+    ObjectKey key;
+};
+
+struct RemoveObjectResponse {
+    ErrorCode error_code{ErrorCode::OK};
+};
+
+/**
+ * @brief Request to remove all objects
+ * Maps to: Result<size_t> remove_all_objects()
+ */
+struct RemoveAllObjectsRequest {
+    int32_t dummy{0};  // YLT struct_pack requires non-empty structs
+};
+
+struct RemoveAllObjectsResponse {
+    size_t objects_removed;
+    ErrorCode error_code{ErrorCode::OK};
+};
+
+/**
+ * @brief Request for cluster statistics
+ * Maps to: Result<ClusterStats> get_cluster_stats() const
+ */
+struct GetClusterStatsRequest {
+    int32_t dummy{0};  // YLT struct_pack requires non-empty structs
+};
+
+struct GetClusterStatsResponse {
+    ClusterStats stats;
+    ErrorCode error_code{ErrorCode::OK};
+};
+
+/**
+ * @brief Request for view version
+ * Maps to: ViewVersionId get_view_version() const noexcept
+ */
+struct GetViewVersionRequest {
+    int32_t dummy{0};  // YLT struct_pack requires non-empty structs
+};
+
+struct GetViewVersionResponse {
+    ViewVersionId view_version;
+    ErrorCode error_code{ErrorCode::OK};
+};
+
+/**
+ * @brief Batch request to check object existence
+ * Maps to: std::vector<Result<bool>> batch_object_exists(const std::vector<ObjectKey>& keys)
+ */
+struct BatchObjectExistsRequest {
+    std::vector<ObjectKey> keys;
+};
+
+struct BatchObjectExistsResponse {
+    std::vector<Result<bool>> results;
+    ErrorCode error_code{ErrorCode::OK};
+};
+
+/**
+ * @brief Batch request to get worker placements
+ * Maps to: std::vector<Result<std::vector<CopyPlacement>>> batch_get_workers(const std::vector<ObjectKey>& keys)
+ */
+struct BatchGetWorkersRequest {
+    std::vector<ObjectKey> keys;
+};
+
+struct BatchGetWorkersResponse {
+    std::vector<Result<std::vector<CopyPlacement>>> results;
+    ErrorCode error_code{ErrorCode::OK};
+};
+
+/**
+ * @brief Batch request to start put operations
+ * Maps to: std::vector<Result<std::vector<CopyPlacement>>> batch_put_start(const std::vector<std::pair<ObjectKey, std::pair<size_t, WorkerConfig>>>& requests)
+ */
+struct BatchPutStartRequest {
+    std::vector<std::pair<ObjectKey, std::pair<size_t, WorkerConfig>>> requests;
+};
+
+struct BatchPutStartResponse {
+    std::vector<Result<std::vector<CopyPlacement>>> results;
+    ErrorCode error_code{ErrorCode::OK};
+};
+
+/**
+ * @brief Batch request to complete put operations
+ * Maps to: std::vector<ErrorCode> batch_put_complete(const std::vector<ObjectKey>& keys)
+ */
+struct BatchPutCompleteRequest {
+    std::vector<ObjectKey> keys;
+};
+
+struct BatchPutCompleteResponse {
+    std::vector<ErrorCode> results;
+    ErrorCode error_code{ErrorCode::OK};
+};
+
+/**
+ * @brief Batch request to cancel put operations
+ * Maps to: std::vector<ErrorCode> batch_put_cancel(const std::vector<ObjectKey>& keys)
+ */
+struct BatchPutCancelRequest {
+    std::vector<ObjectKey> keys;
+};
+
+struct BatchPutCancelResponse {
+    std::vector<ErrorCode> results;
+    ErrorCode error_code{ErrorCode::OK};
+};
+
+/**
+ * @brief Response structure for ping operations
+ */
+struct PingResponse {
+    ViewVersionId view_version;
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(PingResponse, view_version)
+
+    friend std::ostream& operator<<(std::ostream& os, const PingResponse& response) noexcept {
+        return os << "PingResponse{view_version=" << response.view_version << "}";
+    }
+};
+
+/**
+ * @brief Configuration for the keystone service
+ */
+struct KeystoneConfig {
+    std::string cluster_id{DEFAULT_CLUSTER_ID};
+    std::string etcd_endpoints;  // Comma-separated etcd endpoints
+    std::string listen_address{"0.0.0.0:9090"};
+    std::string http_metrics_port{"9091"};
+
+    bool enable_gc{true};
+    bool enable_ha{false};  // High availability mode
+    double eviction_ratio{0.1};
+    double high_watermark{DEFAULT_HIGH_WATERMARK};
+    int64_t client_ttl_sec{DEFAULT_CLIENT_TTL_SEC};
+    int64_t worker_heartbeat_ttl_sec{30};  // Worker considered stale after 30s without heartbeat
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(KeystoneConfig, cluster_id, etcd_endpoints, listen_address,
+                                   http_metrics_port, enable_gc, enable_ha, eviction_ratio,
+                                   high_watermark, client_ttl_sec, worker_heartbeat_ttl_sec)
+};
+
+/**
+ * @brief Configuration for client nodes
+ */
+struct ClientConfig {
+    std::string node_id;
+    std::string keystone_address;
+    std::string local_address{"0.0.0.0:0"};  // Let UCX choose port
+
+    size_t memory_pool_size{1ULL << 30};  // 1GB default
+    std::string storage_path;  // Optional disk storage path
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(ClientConfig, node_id, keystone_address, local_address,
+                                   memory_pool_size, storage_path)
+};
+
+/**
+ * @brief Represents a memory segment (chunk) in the distributed cache
  */
 struct Segment {
     SegmentId id;
@@ -212,70 +417,35 @@ struct Segment {
     size_t size{0};         // Total size of the segment
     size_t used{0};         // Currently used space
     UcxAddress ucx_address; // UCX worker address for this segment
-    
-    // JSON serialization support
+
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(Segment, id, node_id, base_addr, size, used, ucx_address)
-    
+
     double utilization() const noexcept {
         return size > 0 ? static_cast<double>(used) / size : 0.0;
     }
-    
+
     size_t available() const noexcept {
         return size > used ? size - used : 0;
     }
 };
 
-/**
- * @brief Response structure for ping operations
- */
-struct PingResponse {
-    ViewVersionId view_version;
-    ClientStatus client_status;
-    
-    // JSON serialization support
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(PingResponse, view_version, client_status)
-    
-    friend std::ostream& operator<<(std::ostream& os, const PingResponse& response) noexcept {
-        return os << "PingResponse{view_version=" << response.view_version
-                  << ", client_status=" << response.client_status << "}";
+}  // namespace blackbird
+
+namespace std {
+
+template<>
+struct hash<blackbird::UUID> {
+    size_t operator()(const blackbird::UUID& id) const noexcept {
+        uint64_t a = id.first;
+        uint64_t b = id.second;
+        a ^= b + 0x9e3779b97f4a7c15ULL + (a << 6) + (a >> 2);
+        a ^= a >> 33;
+        a *= 0xff51afd7ed558ccdULL;
+        a ^= a >> 33;
+        a *= 0xc4ceb9fe1a85ec53ULL;
+        a ^= a >> 33;
+        return static_cast<size_t>(a);
     }
 };
 
-/**
- * @brief Configuration for the master service
- */
-struct MasterConfig {
-    std::string cluster_id{DEFAULT_CLUSTER_ID};
-    std::string etcd_endpoints;  // Comma-separated etcd endpoints
-    std::string listen_address{"0.0.0.0:9090"};
-    std::string http_metrics_port{"9091"};
-    
-    bool enable_gc{true};
-    bool enable_ha{false};  // High availability mode
-    double eviction_ratio{DEFAULT_EVICTION_RATIO};
-    double high_watermark{DEFAULT_HIGH_WATERMARK};
-    int64_t client_ttl_sec{DEFAULT_CLIENT_TTL_SEC};
-    
-    // JSON serialization support
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(MasterConfig, cluster_id, etcd_endpoints, listen_address, 
-                                   http_metrics_port, enable_gc, enable_ha, eviction_ratio, 
-                                   high_watermark, client_ttl_sec)
-};
-
-/**
- * @brief Configuration for client nodes
- */
-struct ClientConfig {
-    std::string node_id;
-    std::string master_address;
-    std::string local_address{"0.0.0.0:0"};  // Let UCX choose port
-    
-    size_t memory_pool_size{1ULL << 30};  // 1GB default
-    std::string storage_path;  // Optional disk storage path
-    
-    // JSON serialization support
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(ClientConfig, node_id, master_address, local_address,
-                                   memory_pool_size, storage_path)
-};
-
-}  // namespace blackbird 
+} // namespace std 
