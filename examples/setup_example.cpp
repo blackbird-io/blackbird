@@ -74,7 +74,7 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    LOG(INFO) << "Starting Keystone Service";
+    LOG(INFO) << "Starting up Keystone Services";
     LOG(INFO) << "Configuration:";
     LOG(INFO) << "  Cluster ID: " << config.cluster_id;
     LOG(INFO) << "  Etcd Endpoints: " << config.etcd_endpoints;
@@ -137,7 +137,7 @@ int main(int argc, char* argv[]) {
                 if (is_ok(stats_result)) {
                     auto stats = get_value(stats_result);
                     LOG(INFO) << "Cluster Status: "
-                              << "clients=" << stats.active_clients << "/"  << stats.total_clients
+                              << "workers=" << stats.active_workers << "/" << stats.total_workers
                               << ", segments=" << stats.total_segments
                               << ", objects=" << stats.total_objects
                               << ", utilization=" << std::fixed << std::setprecision(1) 

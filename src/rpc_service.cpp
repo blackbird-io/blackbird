@@ -63,23 +63,21 @@ void RpcService::stop() {
     LOG(INFO) << "RpcService stopped";
 }
 
-// RPC Methods - REMOVED client/segment registration
-// Clients and workers register directly to etcd, not through Keystone RPC
-
+// === Internal domain forwards (KeystoneService delegation) ===
 Result<bool> RpcService::object_exists(const ObjectKey& key) {
     return handle_service_call<bool>([&]() { return keystone_service_->object_exists(key); });
 }
 
-Result<std::vector<WorkerPlacement>> RpcService::get_workers(const ObjectKey& key) {
-    return handle_service_call<std::vector<WorkerPlacement>>([&]() {
+Result<std::vector<CopyPlacement>> RpcService::get_workers(const ObjectKey& key) {
+    return handle_service_call<std::vector<CopyPlacement>>([&]() {
         return keystone_service_->get_workers(key);
     });
 }
 
-Result<std::vector<WorkerPlacement>> RpcService::put_start(const ObjectKey& key, 
-                                                             size_t data_size, 
-                                                             const WorkerConfig& config) {
-    return handle_service_call<std::vector<WorkerPlacement>>([&]() {
+Result<std::vector<CopyPlacement>> RpcService::put_start(const ObjectKey& key, 
+                                                   size_t data_size, 
+                                                   const WorkerConfig& config) {
+    return handle_service_call<std::vector<CopyPlacement>>([&]() {
         return keystone_service_->put_start(key, data_size, config);
     });
 }
@@ -118,24 +116,30 @@ std::vector<Result<bool>> RpcService::batch_object_exists(const std::vector<Obje
     }
 }
 
-std::vector<Result<std::vector<WorkerPlacement>>> RpcService::batch_get_workers(const std::vector<ObjectKey>& keys) {
+std::vector<Result<std::vector<CopyPlacement>>> RpcService::batch_get_workers(const std::vector<ObjectKey>& keys) {
     try {
         return keystone_service_->batch_get_workers(keys);
     } catch (const std::exception& e) {
         LOG(ERROR) << "Exception in batch_get_workers: " << e.what();
-        return std::vector<Result<std::vector<WorkerPlacement>>>(keys.size(), ErrorCode::INTERNAL_ERROR);
+        return std::vector<Result<std::vector<CopyPlacement>>>(keys.size(), ErrorCode::INTERNAL_ERROR);
     }
 }
 
-std::vector<Result<std::vector<WorkerPlacement>>> RpcService::batch_put_start(
+std::vector<Result<std::vector<CopyPlacement>>> RpcService::batch_put_start(
     const std::vector<ObjectKey>& keys,
     const std::vector<size_t>& data_sizes,
     const WorkerConfig& config) {
     try {
-        return keystone_service_->batch_put_start(keys, data_sizes, config);
+        // Convert to the format expected by KeystoneService
+        std::vector<std::pair<ObjectKey, std::pair<size_t, WorkerConfig>>> requests;
+        requests.reserve(keys.size());
+        for (size_t i = 0; i < keys.size() && i < data_sizes.size(); ++i) {
+            requests.emplace_back(keys[i], std::make_pair(data_sizes[i], config));
+        }
+        return keystone_service_->batch_put_start(requests);
     } catch (const std::exception& e) {
         LOG(ERROR) << "Exception in batch_put_start: " << e.what();
-        return std::vector<Result<std::vector<WorkerPlacement>>>(keys.size(), ErrorCode::INTERNAL_ERROR);
+        return std::vector<Result<std::vector<CopyPlacement>>>(keys.size(), ErrorCode::INTERNAL_ERROR);
     }
 }
 
@@ -157,7 +161,6 @@ std::vector<ErrorCode> RpcService::batch_put_cancel(const std::vector<ObjectKey>
     }
 }
 
-// Admin/Monitoring methods
 Result<ClusterStats> RpcService::get_cluster_stats() {
     return handle_service_call<ClusterStats>([&]() {
         return keystone_service_->get_cluster_stats();
@@ -208,9 +211,164 @@ ErrorCode RpcService::setup_http_server() {
     }
 }
 
+// === YLT RPC Endpoints (Direct KeystoneService Pass-through) ===
+ObjectExistsResponse RpcService::rpc_object_exists(ObjectExistsRequest request) {
+    ObjectExistsResponse response;
+    auto result = keystone_service_->object_exists(request.key);
+    
+    if (is_ok(result)) {
+        response.exists = get_value(result);
+        response.error_code = ErrorCode::OK;
+    } else {
+        response.exists = false;
+        response.error_code = get_error(result);
+    }
+    
+    return response;
+}
+
+GetWorkersResponse RpcService::rpc_get_workers(GetWorkersRequest request) {
+    GetWorkersResponse response;
+    auto result = keystone_service_->get_workers(request.key);
+    
+    if (is_ok(result)) {
+        response.copies = get_value(result);
+        response.error_code = ErrorCode::OK;
+    } else {
+        response.error_code = get_error(result);
+    }
+    
+    return response;
+}
+
+PutStartResponse RpcService::rpc_put_start(PutStartRequest request) {
+    PutStartResponse response;
+    auto result = keystone_service_->put_start(request.key, request.data_size, request.config);
+    
+    if (is_ok(result)) {
+        response.copies = get_value(result);
+        response.error_code = ErrorCode::OK;
+    } else {
+        response.error_code = get_error(result);
+    }
+    
+    return response;
+}
+
+PutCompleteResponse RpcService::rpc_put_complete(PutCompleteRequest request) {
+    PutCompleteResponse response;
+    response.error_code = keystone_service_->put_complete(request.key);
+    return response;
+}
+
+PutCancelResponse RpcService::rpc_put_cancel(PutCancelRequest request) {
+    PutCancelResponse response;
+    response.error_code = keystone_service_->put_cancel(request.key);
+    return response;
+}
+
+RemoveObjectResponse RpcService::rpc_remove_object(RemoveObjectRequest request) {
+    RemoveObjectResponse response;
+    response.error_code = keystone_service_->remove_object(request.key);
+    return response;
+}
+
+RemoveAllObjectsResponse RpcService::rpc_remove_all_objects(RemoveAllObjectsRequest request) {
+    RemoveAllObjectsResponse response;
+    auto result = keystone_service_->remove_all_objects();
+    
+    if (is_ok(result)) {
+        response.objects_removed = get_value(result);
+        response.error_code = ErrorCode::OK;
+    } else {
+        response.objects_removed = 0;
+        response.error_code = get_error(result);
+    }
+    
+    return response;
+}
+
+GetClusterStatsResponse RpcService::rpc_get_cluster_stats(GetClusterStatsRequest request) {
+    GetClusterStatsResponse response;
+    auto result = keystone_service_->get_cluster_stats();
+    
+    if (is_ok(result)) {
+        response.stats = get_value(result);
+        response.error_code = ErrorCode::OK;
+    } else {
+        response.error_code = get_error(result);
+    }
+    
+    return response;
+}
+
+GetViewVersionResponse RpcService::rpc_get_view_version(GetViewVersionRequest request) {
+    GetViewVersionResponse response;
+    response.view_version = keystone_service_->get_view_version();
+    response.error_code = ErrorCode::OK;
+    return response;
+}
+
+BatchObjectExistsResponse RpcService::rpc_batch_object_exists(BatchObjectExistsRequest request) {
+    BatchObjectExistsResponse response;
+    response.results = keystone_service_->batch_object_exists(request.keys);
+    response.error_code = ErrorCode::OK;
+    return response;
+}
+
+BatchGetWorkersResponse RpcService::rpc_batch_get_workers(BatchGetWorkersRequest request) {
+    BatchGetWorkersResponse response;
+    response.results = keystone_service_->batch_get_workers(request.keys);
+    response.error_code = ErrorCode::OK;
+    return response;
+}
+
+BatchPutStartResponse RpcService::rpc_batch_put_start(BatchPutStartRequest request) {
+    BatchPutStartResponse response;
+    response.results = keystone_service_->batch_put_start(request.requests);
+    response.error_code = ErrorCode::OK;
+    return response;
+}
+
+BatchPutCompleteResponse RpcService::rpc_batch_put_complete(BatchPutCompleteRequest request) {
+    BatchPutCompleteResponse response;
+    response.results = keystone_service_->batch_put_complete(request.keys);
+    response.error_code = ErrorCode::OK;
+    return response;
+}
+
+BatchPutCancelResponse RpcService::rpc_batch_put_cancel(BatchPutCancelRequest request) {
+    BatchPutCancelResponse response;
+    response.results = keystone_service_->batch_put_cancel(request.keys);
+    response.error_code = ErrorCode::OK;
+    return response;
+}
+
 void RpcService::register_rpc_methods() {
-    LOG(INFO) << "Registering RPC methods...";
-    LOG(INFO) << "Registered RPC methods: ping, register_client, register_segment, etc.";
+    if (!rpc_server_) {
+        LOG(ERROR) << "Cannot register RPC methods: server not initialized";
+        return;
+    }
+    
+    LOG(INFO) << "Registering YLT RPC methods (direct KeystoneService pass-through)...";
+    
+    // Register all RPC methods - direct pass-through to KeystoneService
+    rpc_server_->register_handler<&RpcService::rpc_object_exists>(this);
+    rpc_server_->register_handler<&RpcService::rpc_get_workers>(this);
+    rpc_server_->register_handler<&RpcService::rpc_put_start>(this);
+    rpc_server_->register_handler<&RpcService::rpc_put_complete>(this);
+    rpc_server_->register_handler<&RpcService::rpc_put_cancel>(this);
+    rpc_server_->register_handler<&RpcService::rpc_remove_object>(this);
+    rpc_server_->register_handler<&RpcService::rpc_remove_all_objects>(this);
+    rpc_server_->register_handler<&RpcService::rpc_get_cluster_stats>(this);
+    rpc_server_->register_handler<&RpcService::rpc_get_view_version>(this);
+    rpc_server_->register_handler<&RpcService::rpc_batch_object_exists>(this);
+    rpc_server_->register_handler<&RpcService::rpc_batch_get_workers>(this);
+    rpc_server_->register_handler<&RpcService::rpc_batch_put_start>(this);
+    rpc_server_->register_handler<&RpcService::rpc_batch_put_complete>(this);
+    rpc_server_->register_handler<&RpcService::rpc_batch_put_cancel>(this);
+    
+    LOG(INFO) << "Registered 14 YLT RPC methods successfully";
 }
 
 void RpcService::setup_metrics_endpoint() {
@@ -233,7 +391,6 @@ void RpcService::run_http_server() {
     LOG(INFO) << "HTTP server thread stopped";
 }
 
-// Helper methods for error handling
 template<typename T>
 Result<T> RpcService::handle_service_call(std::function<Result<T>()> service_call) {
     try {
@@ -251,11 +408,6 @@ ErrorCode RpcService::handle_service_call(std::function<ErrorCode()> service_cal
         LOG(ERROR) << "Exception in service call: " << e.what();
         return ErrorCode::INTERNAL_ERROR;
     }
-}
-
-void register_rpc_methods(coro_rpc::coro_rpc_server& server, RpcService& rpc_service) {
-    LOG(INFO) << "Registering RPC methods with server...";
-    LOG(INFO) << "All RPC methods registered";
 }
 
 std::shared_ptr<RpcService> create_and_start_keystone(const KeystoneConfig& config) {

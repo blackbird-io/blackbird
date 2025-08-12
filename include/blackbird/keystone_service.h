@@ -15,65 +15,43 @@
 namespace blackbird {
 
 /**
- * @brief Result type for operations that can fail
- */
-template<typename T>
-using Result = std::variant<T, ErrorCode>;
-
-/**
- * @brief Simple expected-like helper for Result
- */
-template<typename T>
-bool is_ok(const Result<T>& result) {
-    return std::holds_alternative<T>(result);
-}
-
-template<typename T>
-T get_value(const Result<T>& result) {
-    return std::get<T>(result);
-}
-
-template<typename T>
-ErrorCode get_error(const Result<T>& result) {
-    return std::get<ErrorCode>(result);
-}
-
-/**
- * @brief Information about a connected client
- */
-struct ClientInfo {
-    UUID client_id;
-    NodeId node_id;
-    std::string endpoint;
-    std::chrono::steady_clock::time_point last_ping;
-    std::vector<SegmentId> segments;  // Segments owned by this client
-    
-    bool is_stale(std::chrono::seconds ttl) const {
-        auto now = std::chrono::steady_clock::now();
-        return (now - last_ping) > ttl;
-    }
-};
-
-/**
  * @brief Information about an object stored in the cache
  */
 struct ObjectInfo {
     ObjectKey key;
-    std::vector<WorkerPlacement> workers;
-    std::chrono::steady_clock::time_point created_at;
-    std::chrono::steady_clock::time_point last_accessed;
-    bool soft_pinned{false};
-    uint64_t ttl_ms{DEFAULT_KV_TTL_MS};
+    size_t size{0};                               // Object size in bytes
+    std::chrono::system_clock::time_point created;
+    std::chrono::system_clock::time_point last_accessed;
+    WorkerConfig config;                          // Configuration used for this object
+    std::vector<CopyPlacement> copies;           // Data copies (replication factor)
     
     bool is_expired() const {
-        if (ttl_ms == 0) return false;  // No expiration
-        auto now = std::chrono::steady_clock::now();
-        auto age = std::chrono::duration_cast<std::chrono::milliseconds>(now - created_at);
-        return age.count() > static_cast<int64_t>(ttl_ms);
+        if (config.ttl_ms == 0) return false;  // No expiration
+        auto now = std::chrono::system_clock::now();
+        auto age = std::chrono::duration_cast<std::chrono::milliseconds>(now - created);
+        return age.count() > static_cast<int64_t>(config.ttl_ms);
     }
     
     void touch() {
-        last_accessed = std::chrono::steady_clock::now();
+        last_accessed = std::chrono::system_clock::now();
+    }
+    
+    bool has_complete_copy() const noexcept {
+        return std::any_of(copies.begin(), copies.end(), [](const CopyPlacement& copy) {
+            return !copy.shards.empty(); // Simple check - has shards means complete
+        });
+    }
+    
+    size_t replication_factor() const noexcept {
+        return copies.size();
+    }
+    
+    size_t total_worker_count() const noexcept {
+        size_t count = 0;
+        for (const auto& copy : copies) {
+            count += copy.shards_size();
+        }
+        return count;
     }
 };
 
@@ -92,21 +70,6 @@ struct WorkerInfo {
         auto now = std::chrono::steady_clock::now();
         return (now - last_heartbeat) > ttl;
     }
-};
-
-/**
- * @brief Cluster statistics for monitoring
- */
-struct ClusterStats {
-    size_t total_workers{0};
-    size_t active_workers{0};
-    size_t total_clients{0};      // Total number of clients
-    size_t active_clients{0};     // Active clients (non-stale)
-    size_t total_segments{0};
-    size_t total_capacity{0};     // Total storage capacity in bytes
-    size_t used_capacity{0};      // Used storage capacity in bytes
-    size_t total_objects{0};      // Number of stored objects
-    double utilization{0.0};      // Overall cluster utilization (0.0-1.0)
 };
 
 /**
@@ -168,22 +131,22 @@ public:
     Result<bool> object_exists(const ObjectKey& key);
     
     /**
-     * @brief Get worker placements for an object
-     * @param key Object key
-     * @return Vector of worker placements
+     * @brief Get worker placement information for an object
+     * @param key Object key to retrieve
+     * @return Result containing placement information or error
      */
-    Result<std::vector<WorkerPlacement>> get_workers(const ObjectKey& key);
+    Result<std::vector<CopyPlacement>> get_workers(const ObjectKey& key);
     
     /**
-     * @brief Start a put operation (allocate workers)
+     * @brief Start a put operation for an object
      * @param key Object key
-     * @param data_size Total data size
+     * @param size Object size in bytes
      * @param config Worker configuration
-     * @return Vector of allocated worker placements
+     * @return Result containing placement information or error
      */
-    Result<std::vector<WorkerPlacement>> put_start(const ObjectKey& key, 
-                                                   size_t data_size, 
-                                                   const WorkerConfig& config);
+    Result<std::vector<CopyPlacement>> put_start(const ObjectKey& key,
+                                           size_t size,
+                                           const WorkerConfig& config);
     
     /**
      * @brief Complete a put operation (mark workers as complete)
@@ -212,34 +175,10 @@ public:
      */
     Result<size_t> remove_all_objects();
     
-    // === Batch Operations ===
-    
     /**
-     * @brief Handle client ping (heartbeat) - for future compatibility
-     * @param client_id Client identifier
-     * @return PingResponse with current view version and client status
-     */
-    Result<PingResponse> ping_client(const UUID& client_id);
-    
-    /**
-     * @brief Get active clients (read-only view from ETCD)
-     * @param clients Output parameter for client information
-     * @return ErrorCode::OK on success
-     */
-    ErrorCode get_active_clients(std::vector<ClientInfo>& clients) const;
-    
-    /**
-     * @brief Get available chunks (read-only view from ETCD) 
-     * @param chunks Output parameter for chunk information
-     * @return ErrorCode::OK on success
+     * Readonly snapshot of all objects/storage systems mounted on the cluster.
      */
     ErrorCode get_chunks(std::vector<Segment>& chunks) const;
-    
-    /**
-     * @brief Remove worker from cluster (emergency management)
-     * @param worker_id Worker identifier to remove
-     * @return ErrorCode::OK on success
-     */
     ErrorCode remove_worker(const std::string& worker_id);
     
     /**
@@ -259,23 +198,19 @@ public:
     std::vector<Result<bool>> batch_object_exists(const std::vector<ObjectKey>& keys);
     
     /**
-     * @brief Batch get worker placements
+     * @brief Batch version of get_workers
      * @param keys Vector of object keys
-     * @return Vector of worker placement results
+     * @return Vector of results for each key
      */
-    std::vector<Result<std::vector<WorkerPlacement>>> batch_get_workers(const std::vector<ObjectKey>& keys);
+    std::vector<Result<std::vector<CopyPlacement>>> batch_get_workers(const std::vector<ObjectKey>& keys);
     
     /**
-     * @brief Batch start put operations
-     * @param keys Vector of object keys
-     * @param data_sizes Vector of data sizes
-     * @param config Worker configuration
-     * @return Vector of worker placement results
+     * @brief Batch version of put_start
+     * @param requests Vector of put start requests
+     * @return Vector of results for each request
      */
-    std::vector<Result<std::vector<WorkerPlacement>>> batch_put_start(
-        const std::vector<ObjectKey>& keys,
-        const std::vector<size_t>& data_sizes,
-        const WorkerConfig& config);
+    std::vector<Result<std::vector<CopyPlacement>>> batch_put_start(
+        const std::vector<std::pair<ObjectKey, std::pair<size_t, WorkerConfig>>>& requests);
     
     /**
      * @brief Batch complete put operations
@@ -320,10 +255,6 @@ private:
     mutable std::shared_mutex chunks_mutex_;
     std::unordered_map<SegmentId, Segment> chunks_;   // Aggregated view of chunks from all workers
     
-    // Client information from ETCD (read-only view)
-    mutable std::shared_mutex clients_mutex_;
-    std::unordered_map<UUID, ClientInfo> clients_;      // client_id -> ClientInfo
-    
     // Object metadata
     mutable std::shared_mutex objects_mutex_;
     std::unordered_map<ObjectKey, ObjectInfo> objects_;
@@ -345,12 +276,15 @@ private:
     std::unordered_map<std::string, std::chrono::steady_clock::time_point> worker_heartbeats_;
     
     // Helper methods
-    ErrorCode allocate_workers(const ObjectKey& key, size_t data_size, 
-                              const WorkerConfig& config,
-                              std::vector<WorkerPlacement>& workers);
+    ErrorCode allocate_data_copies(const ObjectKey& key, size_t data_size, 
+                                  const WorkerConfig& config,
+                                  std::vector<CopyPlacement>& copies);
+                                  
+    ErrorCode allocate_shards_for_copy(const ObjectKey& key, size_t data_size,
+                                       size_t copy_id, size_t max_workers,
+                                       std::vector<ShardPlacement>& shards);
     
     void cleanup_stale_workers();
-    void cleanup_stale_clients();
     void evict_objects_if_needed();
     ViewVersionId increment_view_version();
     
@@ -368,7 +302,6 @@ private:
     // Small helpers
     std::string chunks_prefix() const { return make_etcd_key("chunks/"); }
     std::string workers_prefix() const { return make_etcd_key("workers/"); }
-    std::string clients_prefix() const { return make_etcd_key("clients/"); }
     std::string heartbeat_prefix() const { return make_etcd_key("heartbeat/"); }
 
     // Etcd key builders for new worker layout
@@ -376,11 +309,11 @@ private:
     std::string make_worker_chunk_key(const std::string& worker_id, const std::string& chunk_id) const;
     std::string make_heartbeat_key(const std::string& worker_id) const;
 
-    // Parsing helpers (best-effort, minimal schema)
+    // Parsing helpers
     void upsert_chunk_from_json(const std::string& key, const std::string& json_value);
     void remove_chunk_by_key(const std::string& key);
 
-    // New worker management via etcd
+    // Worker management via etcd
     void watch_worker_registry_namespace();
     void watch_heartbeat_namespace();
     void upsert_worker_from_json(const std::string& key, const std::string& json_value);
@@ -389,12 +322,7 @@ private:
     void remove_worker_chunk_by_key(const std::string& key);
     void update_worker_heartbeat(const std::string& key, const std::string& json_value);
     
-    // Client management helpers for ETCD parsing
-    void upsert_client_from_json(const std::string& key, const std::string& json_value);
-    void remove_client_by_key(const std::string& key);
-    
-    // Client and chunk watchers for etcd-driven state management
-    void watch_clients_namespace();
+    // Chunk watchers
     void watch_chunks_namespace();
 };
 

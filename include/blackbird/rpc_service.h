@@ -17,10 +17,13 @@ namespace blackbird {
  * 
  * This class provides the RPC interface for the Keystone using the YLT framework.
  * It handles:
- * - RPC method registration and routing
+ * - RPC method registration and routing  
  * - Error handling and response formatting
  * - HTTP metrics endpoint
  * - Server lifecycle management
+ *
+ * Uses YLT's native struct_pack serialization for maximum performance.
+ * All network endpoints use structured request/response types for type safety.
  */
 class RpcService {
 public:
@@ -58,8 +61,9 @@ public:
      */
     bool is_running() const noexcept { return running_.load(); }
     
-    // === RPC Methods (exposed to clients) ===
-    // NOTE: Client/worker registration happens directly to etcd, not through RPC
+    // === Server-side domain API (forwards to KeystoneService) ===
+    // NOTE: These are not network RPC endpoints. Remote clients reach the service
+    // via the private rpc_* handlers registered below.
     
     /**
      * @brief Check if an object exists
@@ -71,20 +75,20 @@ public:
     /**
      * @brief Get worker placements for an object
      * @param key Object key
-     * @return Vector of worker placements
+     * @return Result containing placement information
      */
-    Result<std::vector<WorkerPlacement>> get_workers(const ObjectKey& key);
+    Result<std::vector<CopyPlacement>> get_workers(const ObjectKey& key);
     
     /**
      * @brief Start a put operation
      * @param key Object key
-     * @param data_size Total data size
+     * @param data_size Data size in bytes
      * @param config Worker configuration
-     * @return Vector of allocated worker placements
+     * @return Result containing placement information
      */
-    Result<std::vector<WorkerPlacement>> put_start(const ObjectKey& key, 
-                                                     size_t data_size, 
-                                                     const WorkerConfig& config);
+    Result<std::vector<CopyPlacement>> put_start(const ObjectKey& key, 
+                                           size_t data_size, 
+                                           const WorkerConfig& config);
     
     /**
      * @brief Complete a put operation
@@ -113,7 +117,7 @@ public:
      */
     Result<size_t> remove_all_objects();
     
-    // === Batch RPC Methods ===
+    // === Batch domain methods ===
     
     /**
      * @brief Batch check object existence
@@ -125,18 +129,18 @@ public:
     /**
      * @brief Batch get worker placements
      * @param keys Vector of object keys
-     * @return Vector of worker placement results
+     * @return Vector of results
      */
-    std::vector<Result<std::vector<WorkerPlacement>>> batch_get_workers(const std::vector<ObjectKey>& keys);
+    std::vector<Result<std::vector<CopyPlacement>>> batch_get_workers(const std::vector<ObjectKey>& keys);
     
     /**
-     * @brief Batch start put operations
+     * @brief Batch put start operations
      * @param keys Vector of object keys
      * @param data_sizes Vector of data sizes
      * @param config Worker configuration
-     * @return Vector of worker placement results
+     * @return Vector of results
      */
-    std::vector<Result<std::vector<WorkerPlacement>>> batch_put_start(
+    std::vector<Result<std::vector<CopyPlacement>>> batch_put_start(
         const std::vector<ObjectKey>& keys,
         const std::vector<size_t>& data_sizes,
         const WorkerConfig& config);
@@ -195,14 +199,83 @@ private:
     Result<T> handle_service_call(std::function<Result<T>()> service_call);
     
     ErrorCode handle_service_call(std::function<ErrorCode()> service_call);
-};
 
-/**
- * @brief Helper function to register all RPC methods
- * @param server The RPC server instance
- * @param rpc_service The RPC service instance
- */
-void register_rpc_methods(coro_rpc::coro_rpc_server& server, RpcService& rpc_service);
+    // === YLT RPC Endpoints (Direct KeystoneService Pass-through) ===
+    // These are the actual network endpoints registered with YLT.
+    // They directly match KeystoneService API with no conversions needed.
+    
+    /**
+     * @brief Check if object exists | Direct: object_exists(ObjectKey) -> Result<bool>
+     */
+    ObjectExistsResponse rpc_object_exists(ObjectExistsRequest request);
+    
+    /**
+     * @brief Get worker placements | Direct: get_workers(ObjectKey) -> Result<vector<CopyPlacement>>
+     */
+    GetWorkersResponse rpc_get_workers(GetWorkersRequest request);
+    
+    /**
+     * @brief Start put operation | Direct: put_start(ObjectKey, size_t, WorkerConfig) -> Result<vector<CopyPlacement>>
+     */
+    PutStartResponse rpc_put_start(PutStartRequest request);
+    
+    /**
+     * @brief Complete put operation | Direct: put_complete(ObjectKey) -> ErrorCode
+     */
+    PutCompleteResponse rpc_put_complete(PutCompleteRequest request);
+    
+    /**
+     * @brief Cancel put operation | Direct: put_cancel(ObjectKey) -> ErrorCode
+     */
+    PutCancelResponse rpc_put_cancel(PutCancelRequest request);
+    
+    /**
+     * @brief Remove object | Direct: remove_object(ObjectKey) -> ErrorCode
+     */
+    RemoveObjectResponse rpc_remove_object(RemoveObjectRequest request);
+    
+    /**
+     * @brief Remove all objects | Direct: remove_all_objects() -> Result<size_t>
+     */
+    RemoveAllObjectsResponse rpc_remove_all_objects(RemoveAllObjectsRequest request);
+    
+    /**
+     * @brief Get cluster statistics | Direct: get_cluster_stats() -> Result<ClusterStats>
+     */
+    GetClusterStatsResponse rpc_get_cluster_stats(GetClusterStatsRequest request);
+    
+    /**
+     * @brief Get view version | Direct: get_view_version() -> ViewVersionId
+     */
+    GetViewVersionResponse rpc_get_view_version(GetViewVersionRequest request);
+    
+    /**
+     * @brief Batch check object existence | Direct: batch_object_exists(vector<ObjectKey>) -> vector<Result<bool>>
+     */
+    BatchObjectExistsResponse rpc_batch_object_exists(BatchObjectExistsRequest request);
+    
+    /**
+     * @brief Batch get worker placements | Direct: batch_get_workers(vector<ObjectKey>) -> vector<Result<vector<CopyPlacement>>>
+     */
+    BatchGetWorkersResponse rpc_batch_get_workers(BatchGetWorkersRequest request);
+    
+    /**
+     * @brief Batch put start operations | Direct: batch_put_start(...) -> vector<Result<vector<CopyPlacement>>>
+     */
+    BatchPutStartResponse rpc_batch_put_start(BatchPutStartRequest request);
+    
+    /**
+     * @brief Batch complete put operations | Direct: batch_put_complete(vector<ObjectKey>) -> vector<ErrorCode>
+     */
+    BatchPutCompleteResponse rpc_batch_put_complete(BatchPutCompleteRequest request);
+    
+    /**
+     * @brief Batch cancel put operations | Direct: batch_put_cancel(vector<ObjectKey>) -> vector<ErrorCode>
+     */
+    BatchPutCancelResponse rpc_batch_put_cancel(BatchPutCancelRequest request);
+    
+    // No helper methods needed - direct pass-through to KeystoneService
+};
 
 /**
  * @brief Helper function to create and start a complete blackbird keystone

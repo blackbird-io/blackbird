@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <nlohmann/json.hpp>
 
-// Keystone is the master node for blackbird.   
 namespace blackbird {
 
 KeystoneService::KeystoneService(const KeystoneConfig& config) 
@@ -60,17 +59,13 @@ ErrorCode KeystoneService::start() {
     health_check_thread_ = std::thread(&KeystoneService::run_health_checks, this);
     
     if (etcd_) {
-        // CRITICAL: Load existing state from etcd BEFORE starting any threads or watchers
-        // to avoid missing existing registrations and ensure consistency
         load_existing_state_from_etcd();
         
-        // Set up etcd watchers for cluster state (after loading existing state)
-        setup_watcher_with_error_handling("clients", [this]() { watch_clients_namespace(); });
+        // Removed clients watcher (no client persistence)
         setup_watcher_with_error_handling("workers", [this]() { watch_worker_registry_namespace(); });
         setup_watcher_with_error_handling("heartbeats", [this]() { watch_heartbeat_namespace(); });
         setup_watcher_with_error_handling("chunks", [this]() { watch_chunks_namespace(); });
         
-        // Start keepalive thread AFTER watchers are set up and lease is established
         etcd_keepalive_thread_ = std::thread(&KeystoneService::run_etcd_keepalive, this);
     }
     
@@ -83,7 +78,6 @@ void KeystoneService::stop() {
     
     running_.store(false);
     
-    // Join background threads
     if (gc_thread_.joinable()) {
         gc_thread_.join();
     }
@@ -96,53 +90,12 @@ void KeystoneService::stop() {
         etcd_keepalive_thread_.join();
     }
     
-    // Cleanup etcd lease
     if (etcd_ && keystone_lease_id_ != 0) {
         etcd_->revoke_lease(keystone_lease_id_);
         keystone_lease_id_ = 0;
     }
     
     LOG(INFO) << "Keystone service stopped";
-}
-
-// Client Management - REMOVED: Clients register directly to etcd
-// Keystone only watches for changes and maintains read-only view
-
-ErrorCode KeystoneService::get_active_clients(std::vector<ClientInfo>& clients) const {
-    std::shared_lock<std::shared_mutex> lock(clients_mutex_);
-    
-    clients.clear();
-    clients.reserve(clients_.size());
-    
-    auto now = std::chrono::steady_clock::now();
-    auto ttl = std::chrono::seconds(config_.client_ttl_sec);
-    
-    for (const auto& [client_id, client_info] : clients_) {
-        if (!client_info.is_stale(ttl)) {
-            clients.push_back(client_info);
-        }
-    }
-    
-    return ErrorCode::OK;
-}
-
-// Client ping for future compatibility 
-Result<PingResponse> KeystoneService::ping_client(const UUID& client_id) {
-    std::unique_lock<std::shared_mutex> lock(clients_mutex_);
-    
-    auto it = clients_.find(client_id);
-    if (it == clients_.end()) {
-        return ErrorCode::CLIENT_NOT_FOUND;
-    }
-    
-    // Update last ping time
-    it->second.last_ping = std::chrono::steady_clock::now();
-    
-    PingResponse response;
-    response.view_version = get_view_version();
-    response.client_status = ClientStatus::ACTIVE;
-    
-    return response;
 }
 
 // Emergency worker removal for cluster management
@@ -169,6 +122,7 @@ ErrorCode KeystoneService::remove_worker(const std::string& worker_id) {
         worker_heartbeats_.erase(worker_id);
     }
     
+    // arnavb
     // Remove from ETCD (this will trigger watchers)
     if (etcd_) {
         // TODO: Implement delete_key in EtcdService
@@ -210,7 +164,7 @@ ErrorCode KeystoneService::get_workers_info(std::vector<WorkerInfo>& workers) co
 
 // Segment Management - REMOVED: Workers register chunks directly to etcd  
 // Keystone only watches for changes and maintains read-only view
-
+// arnavb remove this if needed
 ErrorCode KeystoneService::get_chunks(std::vector<Segment>& segments) const {
     std::shared_lock<std::shared_mutex> lock(chunks_mutex_);
     
@@ -224,7 +178,7 @@ ErrorCode KeystoneService::get_chunks(std::vector<Segment>& segments) const {
     return ErrorCode::OK;
 }
 
-// Object Management - Stub implementations
+// Object Management
 Result<bool> KeystoneService::object_exists(const ObjectKey& key) {
     std::shared_lock<std::shared_mutex> lock(objects_mutex_);
     
@@ -238,7 +192,7 @@ Result<bool> KeystoneService::object_exists(const ObjectKey& key) {
     return exists;
 }
 
-Result<std::vector<WorkerPlacement>> KeystoneService::get_workers(const ObjectKey& key) {
+Result<std::vector<CopyPlacement>> KeystoneService::get_workers(const ObjectKey& key) {
     std::shared_lock<std::shared_mutex> lock(objects_mutex_);
     
     auto it = objects_.find(key);
@@ -246,13 +200,15 @@ Result<std::vector<WorkerPlacement>> KeystoneService::get_workers(const ObjectKe
         return ErrorCode::OBJECT_NOT_FOUND;
     }
     
+    // Update last access time
     const_cast<ObjectInfo&>(it->second).touch();
-    return it->second.workers;
+    
+    return it->second.copies;
 }
 
-Result<std::vector<WorkerPlacement>> KeystoneService::put_start(const ObjectKey& key, 
-                                                              size_t data_size, 
-                                                              const WorkerConfig& config) {
+Result<std::vector<CopyPlacement>> KeystoneService::put_start(const ObjectKey& key, 
+                                                         size_t data_size, 
+                                                         const WorkerConfig& config) {
     std::unique_lock<std::shared_mutex> lock(objects_mutex_);
     
     // Check if object already exists
@@ -261,26 +217,28 @@ Result<std::vector<WorkerPlacement>> KeystoneService::put_start(const ObjectKey&
         return ErrorCode::OBJECT_ALREADY_EXISTS;
     }
     
-    std::vector<WorkerPlacement> workers;
-    auto err = allocate_workers(key, data_size, config, workers);
+    std::vector<CopyPlacement> copies;
+    auto err = allocate_data_copies(key, data_size, config, copies);
     if (err != ErrorCode::OK) {
         return err;
     }
     
-    // Create object info
+    // Initialize object metadata
     ObjectInfo object_info;
     object_info.key = key;
-    object_info.workers = workers;
-    object_info.created_at = std::chrono::steady_clock::now();
-    object_info.last_accessed = object_info.created_at;
-    object_info.soft_pinned = config.enable_soft_pin;
-    object_info.ttl_ms = config.ttl_ms;
+    object_info.size = data_size;
+    object_info.created = std::chrono::system_clock::now();
+    object_info.last_accessed = object_info.created;
+    object_info.config = config;
+    object_info.copies = std::move(copies);
     
     objects_[key] = std::move(object_info);
     
-    LOG(INFO) << "Started put operation for key: " << key << " (size: " << data_size << ")";
+    LOG(INFO) << "Created object: " << key << " with " << copies.size() << " copies";
     
-    return workers;
+    increment_view_version();
+    
+    return object_info.copies;
 }
 
 ErrorCode KeystoneService::put_complete(const ObjectKey& key) {
@@ -291,12 +249,10 @@ ErrorCode KeystoneService::put_complete(const ObjectKey& key) {
         return ErrorCode::OBJECT_NOT_FOUND;
     }
     
-    // Mark all workers as complete
-    for (auto& w : it->second.workers) {
-        w.status = WorkerStatus::COMPLETE;
-    }
-    
+    // Mark operation as complete - using YLT struct-based approach
     LOG(INFO) << "Completed put operation for key: " << key;
+    
+    increment_view_version();
     return ErrorCode::OK;
 }
 
@@ -338,7 +294,7 @@ Result<size_t> KeystoneService::remove_all_objects() {
     return count;
 }
 
-// Batch operations - Simple implementations
+// Batch operations
 std::vector<Result<bool>> KeystoneService::batch_object_exists(const std::vector<ObjectKey>& keys) {
     std::vector<Result<bool>> results;
     results.reserve(keys.size());
@@ -350,8 +306,8 @@ std::vector<Result<bool>> KeystoneService::batch_object_exists(const std::vector
     return results;
 }
 
-std::vector<Result<std::vector<WorkerPlacement>>> KeystoneService::batch_get_workers(const std::vector<ObjectKey>& keys) {
-    std::vector<Result<std::vector<WorkerPlacement>>> results;
+std::vector<Result<std::vector<CopyPlacement>>> KeystoneService::batch_get_workers(const std::vector<ObjectKey>& keys) {
+    std::vector<Result<std::vector<CopyPlacement>>> results;
     results.reserve(keys.size());
     
     for (const auto& key : keys) {
@@ -361,22 +317,17 @@ std::vector<Result<std::vector<WorkerPlacement>>> KeystoneService::batch_get_wor
     return results;
 }
 
-std::vector<Result<std::vector<WorkerPlacement>>> KeystoneService::batch_put_start(
-    const std::vector<ObjectKey>& keys,
-    const std::vector<size_t>& data_sizes,
-    const WorkerConfig& config) {
+std::vector<Result<std::vector<CopyPlacement>>> KeystoneService::batch_put_start(
+    const std::vector<std::pair<ObjectKey, std::pair<size_t, WorkerConfig>>>& requests) {
+    std::vector<Result<std::vector<CopyPlacement>>> results;
+    results.reserve(requests.size());
     
-    if (keys.size() != data_sizes.size()) {
-        // Return error for all operations
-        std::vector<Result<std::vector<WorkerPlacement>>> results(keys.size(), ErrorCode::INVALID_PARAMETERS);
-        return results;
-    }
-    
-    std::vector<Result<std::vector<WorkerPlacement>>> results;
-    results.reserve(keys.size());
-    
-    for (size_t i = 0; i < keys.size(); ++i) {
-        results.push_back(put_start(keys[i], data_sizes[i], config));
+    for (const auto& request : requests) {
+        const auto& key = request.first;
+        const auto& size = request.second.first;
+        const auto& config = request.second.second;
+        
+        results.push_back(put_start(key, size, config));
     }
     
     return results;
@@ -407,21 +358,6 @@ std::vector<ErrorCode> KeystoneService::batch_put_cancel(const std::vector<Objec
 // Metrics and status
 Result<ClusterStats> KeystoneService::get_cluster_stats() const {
     ClusterStats stats;
-    
-    // Client statistics
-    {
-        std::shared_lock<std::shared_mutex> lock(clients_mutex_);
-        stats.total_clients = clients_.size();
-        
-        auto now = std::chrono::steady_clock::now();
-        auto ttl = std::chrono::seconds(config_.client_ttl_sec);
-        
-        for (const auto& [client_id, client_info] : clients_) {
-            if (!client_info.is_stale(ttl)) {
-                stats.active_clients++;
-            }
-        }
-    }
     
     // Segment statistics
     {
@@ -511,8 +447,10 @@ void KeystoneService::run_health_checks() {
         if (!running_.load()) break;
         
         try {
-            cleanup_stale_clients();
+            // Clean up stale workers that stopped sending heartbeats
             cleanup_stale_workers();
+            
+            // Check storage utilization and evict objects if above high watermark
             evict_objects_if_needed();
         } catch (const std::exception& e) {
             LOG(ERROR) << "Exception in health checks: " << e.what();
@@ -541,86 +479,95 @@ void KeystoneService::run_etcd_keepalive() {
     LOG(INFO) << "Etcd keepalive thread stopped";
 }
 
-ErrorCode KeystoneService::allocate_workers(const ObjectKey& key, size_t data_size, 
-                                          const WorkerConfig& config,
-                                          std::vector<WorkerPlacement>& workers) {
-    workers.clear();
+ErrorCode KeystoneService::allocate_data_copies(const ObjectKey& key, size_t data_size,
+                                               const WorkerConfig& config,
+                                               std::vector<CopyPlacement>& copies) {
+    copies.clear();
     
-    // Validate input parameters
-    if (config.worker_count == 0) {
-        LOG(ERROR) << "Worker count cannot be zero";
-        return ErrorCode::INVALID_PARAMETERS;
-    }
+    // Determine effective parameters
+    size_t replication_factor = config.replication_factor;
+    size_t max_workers_per_copy = config.max_workers_per_copy;
     
-    if (data_size == 0) {
-        LOG(ERROR) << "Data size cannot be zero";
-        return ErrorCode::INVALID_PARAMETERS;
-    }
-    
-    workers.reserve(config.worker_count);
-    
-    // Thread-safe copy of segments to avoid iterator invalidation
-    std::vector<Segment> available_segments;
-    {
-        std::shared_lock<std::shared_mutex> segments_lock(chunks_mutex_);
-        if (chunks_.empty()) {
-            LOG(ERROR) << "No segments available for worker allocation";
-            return ErrorCode::SEGMENT_NOT_FOUND;
+    // Allocate each copy
+    for (size_t copy_id = 0; copy_id < replication_factor; ++copy_id) {
+        CopyPlacement copy_placement;
+        copy_placement.copy_index = copy_id;
+        
+        std::vector<ShardPlacement> shards_for_copy;
+        auto err = allocate_shards_for_copy(key, data_size, copy_id, max_workers_per_copy, shards_for_copy);
+        if (err != ErrorCode::OK) {
+            return err;
         }
         
-        // Copy segments to avoid holding lock during allocation
-        available_segments.reserve(chunks_.size());
-        for (const auto& [id, segment] : chunks_) {
-            available_segments.push_back(segment);
-        }
+        // Add shards to the copy using struct field assignment
+        copy_placement.shards = std::move(shards_for_copy);
+        
+        copies.push_back(std::move(copy_placement));
     }
     
-    // Calculate data distribution
-    size_t chunk_size = data_size / config.worker_count;
-    size_t remainder = data_size % config.worker_count;
-    size_t current_offset = 0;
-    
-    for (size_t i = 0; i < config.worker_count; ++i) {
-        WorkerPlacement placement;
-        placement.status = WorkerStatus::ALLOCATED;
-        
-        // Round-robin segment selection
-        const auto& segment = available_segments[i % available_segments.size()];
-        placement.node_id = segment.node_id;
-        
-        // Calculate this worker's data size (distribute remainder among first workers)
-        size_t this_worker_size = chunk_size + (i < remainder ? 1 : 0);
-        
-        MemoryPlacement mem;
-        UcxRegion region;
-        region.worker_address = segment.ucx_address;
-        region.remote_key = 0;
-        region.remote_addr = segment.base_addr + current_offset; // CRITICAL: Offset to avoid overlap
-        region.size = this_worker_size;
-        mem.kind = MemoryKind::CPU_DRAM;
-        mem.regions.push_back(region);
-        placement.storage = mem;
-        
-        workers.push_back(placement);
-        current_offset += this_worker_size;
-    }
-    
-    LOG(INFO) << "Allocated " << workers.size() << " workers for key: " << key 
-              << " (total_size: " << data_size << ", chunk_size: " << chunk_size << ")";
     return ErrorCode::OK;
 }
 
-void KeystoneService::cleanup_stale_clients() {
-    std::unique_lock<std::shared_mutex> lock(clients_mutex_);
+ErrorCode KeystoneService::allocate_shards_for_copy(const ObjectKey& key, size_t data_size,
+                                                   size_t copy_id, size_t max_workers,
+                                                   std::vector<ShardPlacement>& shards) {
+    shards.clear();
+    
+    // Simple sharding logic - divide data across available workers
+    std::shared_lock<std::shared_mutex> chunks_lock(chunks_mutex_);
+    
+    std::vector<SegmentId> available_chunks;
+    for (const auto& [chunk_id, chunk] : chunks_) {
+        if (chunk.available() > 0) {
+            available_chunks.push_back(chunk_id);
+        }
+    }
+    chunks_lock.unlock();
+    
+    if (available_chunks.empty()) {
+        return ErrorCode::SEGMENT_NOT_FOUND;  // Use existing error code
+    }
+    
+    // Limit workers per copy
+    size_t workers_to_use = std::min(max_workers, available_chunks.size());
+    size_t shard_size = data_size / workers_to_use;
+    size_t remainder = data_size % workers_to_use;
+    
+    for (size_t i = 0; i < workers_to_use; ++i) {
+        ShardPlacement shard;
+        shard.worker_id = available_chunks[i];
+        shard.pool_id = "default"; // TODO: implement proper pool selection
+        
+        // Use preferred storage class if available, otherwise default to RAM_CPU
+        StorageClass storage_class = StorageClass::RAM_CPU;
+        // TODO: Implement preferred_classes selection logic based on available workers
+        // For now, use default storage class since we don't have per-operation config here
+        shard.storage_class = storage_class;
+        
+        size_t current_shard_size = shard_size + (i < remainder ? 1 : 0);
+        shard.length = current_shard_size;
+        
+        // TODO: Set proper endpoint and location details based on available chunks
+        // For now, set default memory location
+        shard.location = MemoryLocation{0, 0, current_shard_size};
+        
+        shards.push_back(std::move(shard));
+    }
+    
+    return ErrorCode::OK;
+}
+
+void KeystoneService::cleanup_stale_workers() {
+    std::unique_lock<std::shared_mutex> lock(worker_registry_mutex_);
     
     auto now = std::chrono::steady_clock::now();
-    auto ttl = std::chrono::seconds(config_.client_ttl_sec);
+    auto ttl = std::chrono::seconds(config_.worker_heartbeat_ttl_sec);
     
-    auto it = clients_.begin();
-    while (it != clients_.end()) {
+    auto it = workers_.begin();
+    while (it != workers_.end()) {
         if (it->second.is_stale(ttl)) {
-            LOG(INFO) << "Removing stale client: " << it->first << " (" << it->second.node_id << ")";
-            it = clients_.erase(it);
+            LOG(INFO) << "Removing stale worker: " << it->first << " (" << it->second.node_id << ")";
+            it = workers_.erase(it);
             increment_view_version();
         } else {
             ++it;
@@ -629,42 +576,61 @@ void KeystoneService::cleanup_stale_clients() {
 }
 
 void KeystoneService::evict_objects_if_needed() {
+    // First check if eviction is actually needed
     auto stats_result = get_cluster_stats();
     if (!is_ok(stats_result)) {
+        LOG(WARNING) << "Failed to get cluster stats for eviction check: " << error::to_string(get_error(stats_result));
         return;
     }
     
     auto stats = get_value(stats_result);
     if (stats.utilization < config_.high_watermark) {
-        return;  // No need to evict
+        VLOG(2) << "Storage utilization (" << (stats.utilization * 100.0) 
+                << "%) below high watermark (" << (config_.high_watermark * 100.0) 
+                << "%), no eviction needed";
+        return;  // No eviction needed
     }
     
-    LOG(INFO) << "High watermark reached (" << (stats.utilization * 100.0) 
+    LOG(INFO) << "Storage utilization (" << (stats.utilization * 100.0) 
+              << "%) exceeds high watermark (" << (config_.high_watermark * 100.0) 
               << "%), starting eviction process";
     
     std::unique_lock<std::shared_mutex> lock(objects_mutex_);
     
-    std::vector<std::pair<std::chrono::steady_clock::time_point, ObjectKey>> lru_objects;
+    if (objects_.empty()) {
+        return;
+    }
+    
+    // Build a list of candidates for eviction (non-soft-pinned objects)
+    std::vector<std::pair<std::chrono::system_clock::time_point, ObjectKey>> candidates;
     for (const auto& [key, object_info] : objects_) {
-        if (!object_info.soft_pinned) {
-            lru_objects.emplace_back(object_info.last_accessed, key);
+        // Only evict objects that are not soft pinned
+        if (!object_info.config.enable_soft_pin) {
+            candidates.emplace_back(object_info.created, key);
         }
     }
     
-    std::sort(lru_objects.begin(), lru_objects.end());
-    
-    size_t target_evictions = static_cast<size_t>(objects_.size() * config_.eviction_ratio);
-    size_t evicted = 0;
-    
-    for (const auto& [last_access, key] : lru_objects) {
-        if (evicted >= target_evictions) break;
-        
-        objects_.erase(key);
-        evicted++;
-        LOG(INFO) << "Evicted object: " << key;
+    if (candidates.empty()) {
+        LOG(WARNING) << "All objects are soft pinned, cannot evict despite high utilization";
+        return;
     }
     
-    LOG(INFO) << "Evicted " << evicted << " objects";
+    // Sort by age (oldest first)
+    std::sort(candidates.begin(), candidates.end());
+    
+    // Evict a percentage of eligible objects to bring utilization down
+    size_t eviction_count = static_cast<size_t>(candidates.size() * config_.eviction_ratio);
+    eviction_count = std::max(eviction_count, static_cast<size_t>(1)); // Evict at least 1 object
+    
+    size_t evicted = 0;
+    for (size_t i = 0; i < eviction_count && i < candidates.size(); ++i) {
+        const auto& key = candidates[i].second;
+        LOG(INFO) << "Evicting object: " << key;
+        objects_.erase(key);
+        evicted++;
+    }
+    
+    LOG(INFO) << "Evicted " << evicted << " objects due to high storage utilization";
 }
 
 ViewVersionId KeystoneService::increment_view_version() {
@@ -863,25 +829,6 @@ void KeystoneService::remove_worker_chunk_by_key(const std::string& key) {
 }
 
 // === Client registry watchers ===
-void KeystoneService::watch_clients_namespace() {
-    if (!etcd_) return;
-    auto prefix = clients_prefix();
-    auto cb = [this](const std::string& key, const std::string& value, bool is_delete) {
-        if (!is_delete) {
-            upsert_client_from_json(key, value);
-        } else {
-            remove_client_by_key(key);
-        }
-    };
-    
-    auto err = etcd_->watch_prefix(prefix, cb);
-    if (err != ErrorCode::OK) {
-        LOG(ERROR) << "Failed to attach client watcher on prefix: " << prefix;
-    } else {
-        LOG(INFO) << "Watching client prefix: " << prefix;
-    }
-}
-
 void KeystoneService::watch_chunks_namespace() {
     if (!etcd_) return;
     auto prefix = chunks_prefix();
@@ -899,86 +846,6 @@ void KeystoneService::watch_chunks_namespace() {
     } else {
         LOG(INFO) << "Watching chunk prefix: " << prefix;
     }
-}
-
-void KeystoneService::upsert_client_from_json(const std::string& key, const std::string& json_value) {
-    try {
-        auto doc = nlohmann::json::parse(json_value);
-        
-        // Extract client_id from key: /clients/<client_id>
-        auto pos = key.rfind('/');
-        if (pos == std::string::npos || pos + 1 >= key.size()) {
-            LOG(WARNING) << "Invalid client key format: " << key;
-            return;
-        }
-        std::string client_id_str = key.substr(pos + 1);
-        
-        // Parse UUID from string (format: "high-low")
-        auto dash_pos = client_id_str.find('-');
-        if (dash_pos == std::string::npos) {
-            LOG(WARNING) << "Invalid client UUID format (missing dash): " << client_id_str;
-            return;
-        }
-        
-        UUID client_id;
-        try {
-            client_id.first = std::stoull(client_id_str.substr(0, dash_pos));
-            client_id.second = std::stoull(client_id_str.substr(dash_pos + 1));
-        } catch (const std::exception& e) {
-            LOG(ERROR) << "Failed to parse client UUID from key: " << client_id_str << " - " << e.what();
-            return;
-        }
-        
-        // Validate required fields
-        if (!doc.contains("node_id") || !doc.contains("endpoint")) {
-            LOG(WARNING) << "Client JSON missing required fields (node_id, endpoint): " << key;
-            return;
-        }
-        
-        ClientInfo info;
-        info.client_id = client_id;
-        info.node_id = doc.value("node_id", std::string{});
-        info.endpoint = doc.value("endpoint", std::string{});
-        info.last_ping = std::chrono::steady_clock::now();
-        
-        {
-            std::unique_lock<std::shared_mutex> lock(clients_mutex_);
-            clients_[client_id] = std::move(info);
-        }
-        
-        increment_view_version();
-        LOG(INFO) << "Registered client from etcd: " << client_id << " (" << info.node_id << ") at " << info.endpoint;
-        
-    } catch (const std::exception& e) {
-        LOG(ERROR) << "Failed to parse client JSON from etcd (key=" << key << "): " << e.what();
-    }
-}
-
-void KeystoneService::remove_client_by_key(const std::string& key) {
-    auto pos = key.rfind('/');
-    if (pos == std::string::npos || pos + 1 >= key.size()) return;
-    std::string client_id_str = key.substr(pos + 1);
-    
-    // Parse UUID from string
-    auto dash_pos = client_id_str.find('-');
-    if (dash_pos == std::string::npos) return;
-    
-    UUID client_id;
-    try {
-        client_id.first = std::stoull(client_id_str.substr(0, dash_pos));
-        client_id.second = std::stoull(client_id_str.substr(dash_pos + 1));
-    } catch (const std::exception& e) {
-        LOG(ERROR) << "Failed to parse client UUID for removal: " << client_id_str;
-        return;
-    }
-    
-    {
-        std::unique_lock<std::shared_mutex> lock(clients_mutex_);
-        clients_.erase(client_id);
-    }
-    
-    increment_view_version();
-    LOG(INFO) << "Removed client from etcd: " << client_id;
 }
 
 void KeystoneService::upsert_chunk_from_json(const std::string& key, const std::string& json_value) {
@@ -1057,45 +924,17 @@ void KeystoneService::update_worker_heartbeat(const std::string& key, const std:
     }
 }
 
-void KeystoneService::cleanup_stale_workers() {
-    std::unique_lock<std::shared_mutex> lock(worker_registry_mutex_);
-    
-    auto now = std::chrono::steady_clock::now();
-    auto ttl = std::chrono::seconds(config_.worker_heartbeat_ttl_sec);
-    
-    auto it = workers_.begin();
-    while (it != workers_.end()) {
-        if (it->second.is_stale(ttl)) {
-            LOG(INFO) << "Removing stale worker: " << it->first << " (" << it->second.node_id << ")";
-            it = workers_.erase(it);
-            increment_view_version();
-        } else {
-            ++it;
-        }
-    }
-}
-
 void KeystoneService::load_existing_state_from_etcd() {
     if (!etcd_) {
         LOG(WARNING) << "Etcd not initialized, cannot load existing state.";
         return;
     }
 
-    // Load clients
-    std::vector<std::string> client_keys, client_values;
-    auto err = etcd_->get_with_prefix(clients_prefix(), client_keys, client_values);
-    if (err == ErrorCode::OK) {
-        for (size_t i = 0; i < client_keys.size(); ++i) {
-            upsert_client_from_json(client_keys[i], client_values[i]);
-        }
-        LOG(INFO) << "Loaded " << client_keys.size() << " clients from etcd.";
-    } else {
-        LOG(WARNING) << "Failed to load clients from etcd: " << error::to_string(err);
-    }
+    // Removed clients load (no client persistence)
 
     // Load segments  
     std::vector<std::string> segment_keys, segment_values;
-    err = etcd_->get_with_prefix(chunks_prefix(), segment_keys, segment_values);
+    auto err = etcd_->get_with_prefix(chunks_prefix(), segment_keys, segment_values);
     if (err == ErrorCode::OK) {
         for (size_t i = 0; i < segment_keys.size(); ++i) {
             upsert_chunk_from_json(segment_keys[i], segment_values[i]);
