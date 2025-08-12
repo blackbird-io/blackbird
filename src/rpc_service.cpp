@@ -51,6 +51,10 @@ void RpcService::stop() {
         rpc_server_.reset();
     }
     
+    if (rpc_server_thread_.joinable()) {
+        rpc_server_thread_.join();
+    }
+    
     if (http_server_) {
         LOG(INFO) << "Stopping HTTP server...";
         http_server_.reset();
@@ -186,7 +190,22 @@ ErrorCode RpcService::setup_rpc_server() {
         
         rpc_server_ = std::make_unique<coro_rpc::coro_rpc_server>(1, std::stoi(port_str));
         register_rpc_methods();
-        LOG(INFO) << "RPC server configured to listen on " << config_.listen_address;
+        
+        // Start the RPC server in a background thread
+        rpc_server_thread_ = std::thread([this]() {
+            LOG(INFO) << "Starting RPC server...";
+            auto err = rpc_server_->start();
+            if (err != coro_rpc::errc::ok) {
+                LOG(ERROR) << "RPC server failed to start with error code: " << (int)err;
+            } else {
+                LOG(INFO) << "RPC server started successfully";
+            }
+        });
+        
+        // Give the server a moment to start
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        
+        LOG(INFO) << "RPC server started and listening on " << config_.listen_address;
         return ErrorCode::OK;
         
     } catch (const std::exception& e) {
@@ -377,12 +396,20 @@ void RpcService::setup_metrics_endpoint() {
 }
 
 void RpcService::run_http_server() {
-    LOG(INFO) << "HTTP server thread started";
+    LOG(INFO) << "Starting HTTP server thread...";
     
     try {
+        // Start the HTTP server using async_start and then wait
+        LOG(INFO) << "HTTP server starting on port " << config_.http_metrics_port;
+        http_server_->async_start();
+        LOG(INFO) << "HTTP server started and running on port " << config_.http_metrics_port;
+        
+        // Keep the thread alive while the server is running
         while (running_.load()) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
+        
+        LOG(INFO) << "HTTP server stopped";
         
     } catch (const std::exception& e) {
         LOG(ERROR) << "Exception in HTTP server thread: " << e.what();

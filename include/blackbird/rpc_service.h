@@ -61,10 +61,6 @@ public:
      */
     bool is_running() const noexcept { return running_.load(); }
     
-    // === Server-side domain API (forwards to KeystoneService) ===
-    // NOTE: These are not network RPC endpoints. Remote clients reach the service
-    // via the private rpc_* handlers registered below.
-    
     /**
      * @brief Check if an object exists
      * @param key Object key
@@ -179,6 +175,7 @@ private:
     
     // RPC server
     std::unique_ptr<coro_rpc::coro_rpc_server> rpc_server_;
+    std::thread rpc_server_thread_;
     
     // HTTP server for metrics
     std::unique_ptr<coro_http::coro_http_server> http_server_;
