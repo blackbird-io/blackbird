@@ -6,7 +6,7 @@
 #include <functional>
 #include <mutex>
 
-#include "blackbird/types.h"
+#include "blackbird/common/types.h"
 
 namespace blackbird {
 
@@ -151,8 +151,6 @@ public:
      */
     ErrorCode unwatch_key(const std::string& key);
     
-    // === Service Discovery Helpers ===
-    
     /**
      * @brief Register a service with etcd
      * @param service_name The name of the service
@@ -186,8 +184,6 @@ public:
      * @return ErrorCode::OK on success
      */
     ErrorCode unregister_service(const std::string& service_name, const std::string& service_id);
-    
-    // === Leader Election ===
     
     /**
      * @brief Attempt to become leader for a given election
@@ -223,7 +219,6 @@ private:
     bool connected_{false};
     mutable std::mutex mutex_;
     
-    // Internal implementation details - will use etcd-cpp-apiv3 or similar
     struct Impl;
     std::unique_ptr<Impl> impl_;
     

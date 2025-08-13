@@ -1,4 +1,4 @@
-#include "blackbird/keystone_service.h"
+#include "blackbird/keystone/keystone_service.h"
 
 #include <glog/logging.h>
 #include <algorithm>
@@ -18,7 +18,6 @@ KeystoneService::~KeystoneService() {
     
     // Cleanup etcd resources
     if (etcd_) {
-        // This will cleanup watchers and leases
         etcd_.reset();
     }
 }
@@ -64,7 +63,7 @@ ErrorCode KeystoneService::start() {
         // Removed clients watcher (no client persistence)
         setup_watcher_with_error_handling("workers", [this]() { watch_worker_registry_namespace(); });
         setup_watcher_with_error_handling("heartbeats", [this]() { watch_heartbeat_namespace(); });
-        setup_watcher_with_error_handling("chunks", [this]() { watch_chunks_namespace(); });
+        setup_watcher_with_error_handling("memory_pools", [this]() { watch_memory_pools_namespace(); });
         
         etcd_keepalive_thread_ = std::thread(&KeystoneService::run_etcd_keepalive, this);
     }
@@ -107,10 +106,10 @@ ErrorCode KeystoneService::remove_worker(const std::string& worker_id) {
         std::unique_lock<std::shared_mutex> lock(worker_registry_mutex_);
         auto worker_it = workers_.find(worker_id);
         if (worker_it != workers_.end()) {
-            // Remove all segments owned by this worker
-            for (const auto& [segment_id, segment] : worker_it->second.chunks) {
-                std::unique_lock<std::shared_mutex> seg_lock(chunks_mutex_);
-                chunks_.erase(segment_id);
+            // Remove all memory pools owned by this worker
+            for (const auto& [memory_pool_id, memory_pool] : worker_it->second.memory_pools) {
+                std::unique_lock<std::shared_mutex> seg_lock(memory_pools_mutex_);
+                memory_pools_.erase(memory_pool_id);
             }
             workers_.erase(worker_it);
         }
@@ -135,7 +134,8 @@ ErrorCode KeystoneService::remove_worker(const std::string& worker_id) {
         // Also remove heartbeat
         // std::string heartbeat_key = make_heartbeat_key(worker_id);
         // etcd_->delete_key(heartbeat_key);  // Best effort, ignore errors
-        LOG(INFO) << "Worker removal from ETCD not implemented yet";
+        LOG(ERROR) << "Worker removal from ETCD not implemented yet";
+        throw std::runtime_error("Worker removal from ETCD not implemented yet");
     }
     
     increment_view_version();
@@ -162,17 +162,16 @@ ErrorCode KeystoneService::get_workers_info(std::vector<WorkerInfo>& workers) co
     return ErrorCode::OK;
 }
 
-// Segment Management - REMOVED: Workers register chunks directly to etcd  
-// Keystone only watches for changes and maintains read-only view
+
 // arnavb remove this if needed
-ErrorCode KeystoneService::get_chunks(std::vector<Segment>& segments) const {
-    std::shared_lock<std::shared_mutex> lock(chunks_mutex_);
+ErrorCode KeystoneService::get_memory_pools(std::vector<MemoryPool>& memory_pools) const {
+    std::shared_lock<std::shared_mutex> lock(memory_pools_mutex_);
     
-    segments.clear();
-    segments.reserve(chunks_.size());
+    memory_pools.clear();
+    memory_pools.reserve(memory_pools_.size());
     
-    for (const auto& [segment_id, segment] : chunks_) {
-        segments.push_back(segment);
+    for (const auto& [memory_pool_id, memory_pool] : memory_pools_) {
+        memory_pools.push_back(memory_pool);
     }
     
     return ErrorCode::OK;
@@ -359,14 +358,14 @@ std::vector<ErrorCode> KeystoneService::batch_put_cancel(const std::vector<Objec
 Result<ClusterStats> KeystoneService::get_cluster_stats() const {
     ClusterStats stats;
     
-    // Segment statistics
+    // Memory Pool statistics
     {
-        std::shared_lock<std::shared_mutex> lock(chunks_mutex_);
-        stats.total_segments = chunks_.size();
+        std::shared_lock<std::shared_mutex> lock(memory_pools_mutex_);
+        stats.total_memory_pools = memory_pools_.size();
         
-        for (const auto& [segment_id, segment] : chunks_) {
-            stats.total_capacity += segment.size;
-            stats.used_capacity += segment.used;
+        for (const auto& [memory_pool_id, memory_pool] : memory_pools_) {
+            stats.total_capacity += memory_pool.size;
+            stats.used_capacity += memory_pool.used;
         }
     }
     
@@ -378,7 +377,7 @@ Result<ClusterStats> KeystoneService::get_cluster_stats() const {
     
     // Calculate utilization
     if (stats.total_capacity > 0) {
-        stats.utilization = static_cast<double>(stats.used_capacity) / stats.total_capacity;
+        stats.avg_utilization = static_cast<double>(stats.used_capacity) / stats.total_capacity;
     }
     
     return stats;
@@ -514,28 +513,30 @@ ErrorCode KeystoneService::allocate_shards_for_copy(const ObjectKey& key, size_t
     shards.clear();
     
     // Simple sharding logic - divide data across available workers
-    std::shared_lock<std::shared_mutex> chunks_lock(chunks_mutex_);
+    std::shared_lock<std::shared_mutex> memory_pools_lock(memory_pools_mutex_);
     
-    std::vector<SegmentId> available_chunks;
-    for (const auto& [chunk_id, chunk] : chunks_) {
-        if (chunk.available() > 0) {
-            available_chunks.push_back(chunk_id);
+    std::vector<MemoryPoolId> available_memory_pools;
+    for (const auto& [memory_pool_id, memory_pool] : memory_pools_) {
+        if (memory_pool.available() > 0) {
+            available_memory_pools.push_back(memory_pool_id);
         }
     }
-    chunks_lock.unlock();
+    memory_pools_lock.unlock();
     
-    if (available_chunks.empty()) {
-        return ErrorCode::SEGMENT_NOT_FOUND;  // Use existing error code
+    if (available_memory_pools.empty()) {
+        return ErrorCode::MEMORY_POOL_NOT_FOUND;  // Use existing error code
     }
     
     // Limit workers per copy
-    size_t workers_to_use = std::min(max_workers, available_chunks.size());
+    // arnavb: this is heavily broken, we need to have a memory allocator with ranges that can manage fragmentation and allocation of internally tracked memory pools
+    // Also try sharding the internal metadata, currently seems to be split across and spilling throughout the codebase, need better management
+    size_t workers_to_use = std::min(max_workers, available_memory_pools.size());
     size_t shard_size = data_size / workers_to_use;
     size_t remainder = data_size % workers_to_use;
     
     for (size_t i = 0; i < workers_to_use; ++i) {
         ShardPlacement shard;
-        shard.worker_id = available_chunks[i];
+        shard.worker_id = available_memory_pools[i];
         shard.pool_id = "default"; // TODO: implement proper pool selection
         
         // Use preferred storage class if available, otherwise default to RAM_CPU
@@ -547,7 +548,7 @@ ErrorCode KeystoneService::allocate_shards_for_copy(const ObjectKey& key, size_t
         size_t current_shard_size = shard_size + (i < remainder ? 1 : 0);
         shard.length = current_shard_size;
         
-        // TODO: Set proper endpoint and location details based on available chunks
+        // TODO: Set proper endpoint and location details based on available memory pools
         // For now, set default memory location
         shard.location = MemoryLocation{0, 0, current_shard_size};
         
@@ -576,7 +577,6 @@ void KeystoneService::cleanup_stale_workers() {
 }
 
 void KeystoneService::evict_objects_if_needed() {
-    // First check if eviction is actually needed
     auto stats_result = get_cluster_stats();
     if (!is_ok(stats_result)) {
         LOG(WARNING) << "Failed to get cluster stats for eviction check: " << error::to_string(get_error(stats_result));
@@ -584,14 +584,14 @@ void KeystoneService::evict_objects_if_needed() {
     }
     
     auto stats = get_value(stats_result);
-    if (stats.utilization < config_.high_watermark) {
-        VLOG(2) << "Storage utilization (" << (stats.utilization * 100.0) 
+    if (stats.avg_utilization < config_.high_watermark) {
+        VLOG(2) << "Storage utilization (" << (stats.avg_utilization * 100.0) 
                 << "%) below high watermark (" << (config_.high_watermark * 100.0) 
                 << "%), no eviction needed";
         return;  // No eviction needed
     }
     
-    LOG(INFO) << "Storage utilization (" << (stats.utilization * 100.0) 
+    LOG(INFO) << "Storage utilization (" << (stats.avg_utilization * 100.0) 
               << "%) exceeds high watermark (" << (config_.high_watermark * 100.0) 
               << "%), starting eviction process";
     
@@ -645,12 +645,91 @@ std::string KeystoneService::make_worker_key(const std::string& worker_id) const
     return workers_prefix() + worker_id;
 }
 
-std::string KeystoneService::make_worker_chunk_key(const std::string& worker_id, const std::string& chunk_id) const {
-    return workers_prefix() + worker_id + "/chunks/" + chunk_id;
-}
-
 std::string KeystoneService::make_heartbeat_key(const std::string& worker_id) const {
     return heartbeat_prefix() + worker_id;
+}
+
+std::string KeystoneService::make_worker_memory_pool_key(const std::string& worker_id, const std::string& memory_pool_id) const {
+    return workers_prefix() + worker_id + "/memory_pools/" + memory_pool_id;
+}
+
+void KeystoneService::upsert_worker_memory_pool_from_json(const std::string& key, const std::string& json_value) {
+    try {
+        // Parse memory pool metadata
+        nlohmann::json doc = nlohmann::json::parse(json_value);
+        
+        // Extract worker_id and memory_pool_id from key: /workers/<worker_id>/memory_pools/<memory_pool_id>
+        auto prefix = workers_prefix();
+        if (!key.starts_with(prefix)) return;
+        
+        std::string suffix = key.substr(prefix.length());
+        auto memory_pool_pos = suffix.find("/memory_pools/");
+        if (memory_pool_pos == std::string::npos) return;
+        
+        std::string worker_id = suffix.substr(0, memory_pool_pos);
+        std::string memory_pool_id = suffix.substr(memory_pool_pos + 14); // 14 = strlen("/memory_pools/")
+        
+        // Parse memory pool metadata
+        MemoryPool memory_pool;
+        memory_pool.id = doc.value("id", memory_pool_id); // fallback to memory_pool_id if not specified
+        memory_pool.node_id = doc.value("node_id", "");
+        memory_pool.base_addr = doc.value("base_addr", 0UL);
+        memory_pool.size = doc.value("size", 0UL);
+        memory_pool.used = doc.value("used", 0UL);
+        
+        if (doc.contains("ucx_address")) {
+            memory_pool.ucx_address = doc["ucx_address"].get<UcxAddress>();
+        }
+        
+        // Update worker's memory pool list
+        std::unique_lock<std::shared_mutex> worker_lock(worker_registry_mutex_);
+        auto worker_it = workers_.find(worker_id);
+        if (worker_it != workers_.end()) {
+            worker_it->second.memory_pools[memory_pool_id] = memory_pool;
+        }
+        
+        // Also update the global memory pools map for compatibility
+        std::unique_lock<std::shared_mutex> pool_lock(memory_pools_mutex_);
+        memory_pools_[memory_pool.id] = memory_pool;
+        
+        worker_lock.unlock();
+        pool_lock.unlock();
+        
+        LOG(INFO) << "Registered memory pool: " << memory_pool_id << " for worker " << worker_id
+                  << " (" << memory_pool.node_id << ") size: " << memory_pool.size;
+        
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Failed to parse worker memory pool JSON from etcd (key=" << key << "): " << e.what();
+    }
+}
+
+void KeystoneService::remove_worker_memory_pool_by_key(const std::string& key) {
+    // Extract worker_id and memory_pool_id from key
+    auto prefix = workers_prefix();
+    if (!key.starts_with(prefix)) return;
+    
+    std::string suffix = key.substr(prefix.length());
+    auto memory_pool_pos = suffix.find("/memory_pools/");
+    if (memory_pool_pos == std::string::npos) return;
+    
+    std::string worker_id = suffix.substr(0, memory_pool_pos);
+    std::string memory_pool_id = suffix.substr(memory_pool_pos + 14);
+    
+    // Remove from worker's memory pool list
+    std::unique_lock<std::shared_mutex> worker_lock(worker_registry_mutex_);
+    auto worker_it = workers_.find(worker_id);
+    if (worker_it != workers_.end()) {
+        worker_it->second.memory_pools.erase(memory_pool_id);
+    }
+    
+    // Also remove from global memory pools map
+    std::unique_lock<std::shared_mutex> pool_lock(memory_pools_mutex_);
+    memory_pools_.erase(memory_pool_id);
+    
+    worker_lock.unlock();
+    pool_lock.unlock();
+    
+    LOG(INFO) << "Removed memory pool: " << memory_pool_id << " from worker " << worker_id;
 }
 
 // === Worker registry watchers ===
@@ -658,19 +737,19 @@ void KeystoneService::watch_worker_registry_namespace() {
     if (!etcd_) return;
     auto prefix = workers_prefix();
     auto cb = [this](const std::string& key, const std::string& value, bool is_delete) {
-        // Determine if this is a worker registration or chunk registration
+        // Determine if this is a worker registration or memory pool registration
         auto workers_len = workers_prefix().length();
         if (key.length() <= workers_len) return;
         
         std::string suffix = key.substr(workers_len);
-        auto chunk_pos = suffix.find("/chunks/");
+        auto memory_pool_pos = suffix.find("/memory_pools/");
         
-        if (chunk_pos != std::string::npos) {
-            // This is a chunk registration: /workers/<worker_id>/chunks/<chunk_id>
+        if (memory_pool_pos != std::string::npos) {
+            // This is a memory pool registration: /workers/<worker_id>/memory_pools/<memory_pool_id>
             if (!is_delete) {
-                upsert_worker_chunk_from_json(key, value);
+                upsert_worker_memory_pool_from_json(key, value);
             } else {
-                remove_worker_chunk_by_key(key);
+                remove_worker_memory_pool_by_key(key);
             }
         } else {
             // This is a worker registration: /workers/<worker_id>
@@ -705,6 +784,25 @@ void KeystoneService::watch_heartbeat_namespace() {
         LOG(ERROR) << "Failed to attach heartbeat watcher on prefix: " << prefix;
     } else {
         LOG(INFO) << "Watching heartbeat prefix: " << prefix;
+    }
+}
+
+void KeystoneService::watch_memory_pools_namespace() {
+    if (!etcd_) return;
+    auto prefix = memory_pools_prefix();
+    auto cb = [this](const std::string& key, const std::string& value, bool is_delete) {
+        if (!is_delete) {
+            upsert_memory_pool_from_json(key, value);
+        } else {
+            remove_memory_pool_by_key(key);
+        }
+    };
+    
+    auto err = etcd_->watch_prefix(prefix, cb);
+    if (err != ErrorCode::OK) {
+        LOG(ERROR) << "Failed to attach memory pool watcher on prefix: " << prefix;
+    } else {
+        LOG(INFO) << "Watching memory pool prefix: " << prefix;
     }
 }
 
@@ -750,147 +848,51 @@ void KeystoneService::remove_worker_by_key(const std::string& key) {
     LOG(INFO) << "Removed worker: " << worker_id;
 }
 
-void KeystoneService::upsert_worker_chunk_from_json(const std::string& key, const std::string& json_value) {
+void KeystoneService::upsert_memory_pool_from_json(const std::string& key, const std::string& json_value) {
     try {
-        auto doc = nlohmann::json::parse(json_value);
+        nlohmann::json doc = nlohmann::json::parse(json_value);
         
-        // Extract worker_id and chunk_id from key: /workers/<worker_id>/chunks/<chunk_id>
-        auto workers_len = workers_prefix().length();
-        if (key.length() <= workers_len) return;
+        // Extract memory_pool_id from key: /memory_pools/<memory_pool_id>
+        auto pos = key.find_last_of('/');
+        if (pos == std::string::npos) return;
         
-        std::string suffix = key.substr(workers_len);
-        auto chunk_pos = suffix.find("/chunks/");
-        if (chunk_pos == std::string::npos) return;
+        std::string memory_pool_id = key.substr(pos + 1);
         
-        std::string worker_id = suffix.substr(0, chunk_pos);
-        std::string chunk_id = suffix.substr(chunk_pos + 8); // 8 = strlen("/chunks/")
+        MemoryPool seg;
+        seg.id = doc.value("id", memory_pool_id);
+        seg.node_id = doc.value("node_id", "");
+        seg.base_addr = doc.value("base_addr", 0UL);
+        seg.size = doc.value("size", 0UL);
+        seg.used = doc.value("used", 0UL);
         
-        // Parse segment metadata using Mooncake's segment schema
-        Segment seg;
-        seg.id = doc.value("id", chunk_id); // fallback to chunk_id if not specified
-        seg.node_id = doc.value("node_id", std::string{});
-        seg.base_addr = doc.value("base_addr", static_cast<uintptr_t>(0));
-        seg.size = doc.value("size", static_cast<size_t>(0));
-        seg.used = doc.value("used", static_cast<size_t>(0));
-        auto addr_vec = doc.value("ucx_address", std::vector<uint8_t>{});
-        seg.ucx_address = addr_vec;
-        
-        {
-            std::unique_lock<std::shared_mutex> lock(worker_registry_mutex_);
-            auto worker_it = workers_.find(worker_id);
-            if (worker_it != workers_.end()) {
-                worker_it->second.chunks[chunk_id] = seg;
-            }
+        if (doc.contains("ucx_address")) {
+            seg.ucx_address = doc["ucx_address"].get<UcxAddress>();
         }
         
-        // Also update the global segments map for compatibility
-        {
-            std::unique_lock<std::shared_mutex> seg_lock(chunks_mutex_);
-            chunks_[seg.id] = seg;
-        }
+        std::unique_lock<std::shared_mutex> lock(memory_pools_mutex_);
+        memory_pools_[seg.id] = seg;
+        lock.unlock();
         
-        increment_view_version();
-        LOG(INFO) << "Registered chunk: " << chunk_id << " for worker " << worker_id 
-                  << " (size: " << seg.size << " bytes)";
-                  
-    } catch (const std::exception& e) {
-        LOG(ERROR) << "Failed to parse worker chunk JSON from etcd (key=" << key << "): " << e.what();
-    }
-}
-
-void KeystoneService::remove_worker_chunk_by_key(const std::string& key) {
-    // Extract worker_id and chunk_id from key
-    auto workers_len = workers_prefix().length();
-    if (key.length() <= workers_len) return;
-    
-    std::string suffix = key.substr(workers_len);
-    auto chunk_pos = suffix.find("/chunks/");
-    if (chunk_pos == std::string::npos) return;
-    
-    std::string worker_id = suffix.substr(0, chunk_pos);
-    std::string chunk_id = suffix.substr(chunk_pos + 8);
-    
-    {
-        std::unique_lock<std::shared_mutex> lock(worker_registry_mutex_);
-        auto worker_it = workers_.find(worker_id);
-        if (worker_it != workers_.end()) {
-            worker_it->second.chunks.erase(chunk_id);
-        }
-    }
-    
-    // Also remove from global segments map
-    {
-        std::unique_lock<std::shared_mutex> seg_lock(chunks_mutex_);
-        chunks_.erase(chunk_id);
-    }
-    
-    increment_view_version();
-    LOG(INFO) << "Removed chunk: " << chunk_id << " from worker " << worker_id;
-}
-
-// === Client registry watchers ===
-void KeystoneService::watch_chunks_namespace() {
-    if (!etcd_) return;
-    auto prefix = chunks_prefix();
-    auto cb = [this](const std::string& key, const std::string& value, bool is_delete) {
-        if (!is_delete) {
-            upsert_chunk_from_json(key, value);
-        } else {
-            remove_chunk_by_key(key);
-        }
-    };
-    
-    auto err = etcd_->watch_prefix(prefix, cb);
-    if (err != ErrorCode::OK) {
-        LOG(ERROR) << "Failed to attach chunk watcher on prefix: " << prefix;
-    } else {
-        LOG(INFO) << "Watching chunk prefix: " << prefix;
-    }
-}
-
-void KeystoneService::upsert_chunk_from_json(const std::string& key, const std::string& json_value) {
-    try {
-        auto doc = nlohmann::json::parse(json_value);
-        
-        // Extract segment_id from key: /segments/<segment_id>
-        auto pos = key.rfind('/');
-        if (pos == std::string::npos || pos + 1 >= key.size()) return;
-        std::string segment_id = key.substr(pos + 1);
-        
-        Segment seg;
-        seg.id = doc.value("id", segment_id);
-        seg.node_id = doc.value("node_id", std::string{});
-        seg.base_addr = doc.value("base_addr", static_cast<uintptr_t>(0));
-        seg.size = doc.value("size", static_cast<size_t>(0));
-        seg.used = doc.value("used", static_cast<size_t>(0));
-        auto addr_vec = doc.value("ucx_address", std::vector<uint8_t>{});
-        seg.ucx_address = addr_vec;
-        
-        {
-            std::unique_lock<std::shared_mutex> lock(chunks_mutex_);
-            chunks_[seg.id] = seg;
-        }
-        
-        increment_view_version();
-        LOG(INFO) << "Registered segment from etcd: " << seg.id << " (" << seg.node_id << ") size: " << seg.size;
+        LOG(INFO) << "Registered memory pool from etcd: " << seg.id << " (" << seg.node_id << ") size: " << seg.size;
         
     } catch (const std::exception& e) {
-        LOG(ERROR) << "Failed to parse segment JSON from etcd (key=" << key << "): " << e.what();
+        LOG(ERROR) << "Failed to parse memory pool JSON from etcd (key=" << key << "): " << e.what();
     }
 }
 
-void KeystoneService::remove_chunk_by_key(const std::string& key) {
-    auto pos = key.rfind('/');
-    if (pos == std::string::npos || pos + 1 >= key.size()) return;
-    std::string chunk_id = key.substr(pos + 1);
+void KeystoneService::remove_memory_pool_by_key(const std::string& key) {
+    // Extract memory_pool_id from key
+    auto pos = key.find_last_of('/');
+    if (pos == std::string::npos) return;
     
-    {
-        std::unique_lock<std::shared_mutex> lock(chunks_mutex_);
-        chunks_.erase(chunk_id);
-    }
+    std::string memory_pool_id = key.substr(pos + 1);
     
-    increment_view_version();
-    LOG(INFO) << "Removed chunk from etcd: " << chunk_id;
+    // Remove from memory_pools map
+    std::unique_lock<std::shared_mutex> lock(memory_pools_mutex_);
+    memory_pools_.erase(memory_pool_id);
+    lock.unlock();
+    
+    LOG(INFO) << "Removed memory pool from etcd: " << memory_pool_id;
 }
 
 void KeystoneService::update_worker_heartbeat(const std::string& key, const std::string& json_value) {
@@ -930,31 +932,17 @@ void KeystoneService::load_existing_state_from_etcd() {
         return;
     }
 
-    // Removed clients load (no client persistence)
-
-    // Load segments  
-    std::vector<std::string> segment_keys, segment_values;
-    auto err = etcd_->get_with_prefix(chunks_prefix(), segment_keys, segment_values);
-    if (err == ErrorCode::OK) {
-        for (size_t i = 0; i < segment_keys.size(); ++i) {
-            upsert_chunk_from_json(segment_keys[i], segment_values[i]);
-        }
-        LOG(INFO) << "Loaded " << segment_keys.size() << " segments from etcd.";
-    } else {
-        LOG(WARNING) << "Failed to load segments from etcd: " << error::to_string(err);
-    }
-
-    // Load workers and worker chunks
+    // Load workers and worker memory pools
     std::vector<std::string> worker_keys, worker_values;
-    err = etcd_->get_with_prefix(workers_prefix(), worker_keys, worker_values);
+    auto err = etcd_->get_with_prefix(workers_prefix(), worker_keys, worker_values);
     if (err == ErrorCode::OK) {
         for (size_t i = 0; i < worker_keys.size(); ++i) {
             const std::string& key = worker_keys[i];
             const std::string& value = worker_values[i];
             
-            // Check if this is a chunk or worker registration
-            if (key.find("/chunks/") != std::string::npos) {
-                upsert_worker_chunk_from_json(key, value);
+            // Check if this is a memory pool or worker registration
+            if (key.find("/memory_pools/") != std::string::npos) {
+                upsert_worker_memory_pool_from_json(key, value);
             } else {
                 upsert_worker_from_json(key, value);
             }
@@ -974,6 +962,18 @@ void KeystoneService::load_existing_state_from_etcd() {
         LOG(INFO) << "Loaded " << heartbeat_keys.size() << " worker heartbeats from etcd.";
     } else {
         LOG(WARNING) << "Failed to load worker heartbeats from etcd: " << error::to_string(err);
+    }
+
+    // Load memory pools
+    std::vector<std::string> memory_pool_keys, memory_pool_values;
+    err = etcd_->get_with_prefix(memory_pools_prefix(), memory_pool_keys, memory_pool_values);
+    if (err == ErrorCode::OK) {
+        for (size_t i = 0; i < memory_pool_keys.size(); ++i) {
+            upsert_memory_pool_from_json(memory_pool_keys[i], memory_pool_values[i]);
+        }
+        LOG(INFO) << "Loaded " << memory_pool_keys.size() << " memory pools from etcd.";
+    } else {
+        LOG(WARNING) << "Failed to load memory pools from etcd: " << error::to_string(err);
     }
 }
 

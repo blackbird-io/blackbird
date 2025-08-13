@@ -1,4 +1,4 @@
-#include "blackbird/error/error_codes.h"
+#include "blackbird/common/error/error_codes.h"
 #include <unordered_map>
 
 namespace blackbird {
@@ -19,9 +19,9 @@ const std::unordered_map<ErrorCode, std::string_view> error_strings{
     // Storage domain
     {ErrorCode::BUFFER_OVERFLOW, "BUFFER_OVERFLOW"},
     {ErrorCode::OUT_OF_MEMORY, "OUT_OF_MEMORY"},
-    {ErrorCode::SEGMENT_NOT_FOUND, "SEGMENT_NOT_FOUND"},
-    {ErrorCode::SEGMENT_ALREADY_EXISTS, "SEGMENT_ALREADY_EXISTS"},
-    {ErrorCode::INVALID_SEGMENT, "INVALID_SEGMENT"},
+    {ErrorCode::MEMORY_POOL_NOT_FOUND, "MEMORY_POOL_NOT_FOUND"},
+    {ErrorCode::MEMORY_POOL_ALREADY_EXISTS, "MEMORY_POOL_ALREADY_EXISTS"},
+    {ErrorCode::INVALID_MEMORY_POOL, "INVALID_MEMORY_POOL"},
     {ErrorCode::ALLOCATION_FAILED, "ALLOCATION_FAILED"},
     {ErrorCode::MEMORY_ACCESS_ERROR, "MEMORY_ACCESS_ERROR"},
     
@@ -81,13 +81,13 @@ const std::unordered_map<ErrorCode, std::string_view> error_descriptions{
     {ErrorCode::RESOURCE_EXHAUSTED, "System resources have been exhausted"},
     
     // Storage domain
-    {ErrorCode::BUFFER_OVERFLOW, "Operation would exceed buffer capacity"},
-    {ErrorCode::OUT_OF_MEMORY, "Insufficient memory to complete operation"},
-    {ErrorCode::SEGMENT_NOT_FOUND, "The specified memory segment does not exist"},
-    {ErrorCode::SEGMENT_ALREADY_EXISTS, "A segment with this ID already exists"},
-    {ErrorCode::INVALID_SEGMENT, "The segment configuration is invalid"},
-    {ErrorCode::ALLOCATION_FAILED, "Failed to allocate requested memory"},
-    {ErrorCode::MEMORY_ACCESS_ERROR, "Error accessing memory region"},
+    {ErrorCode::BUFFER_OVERFLOW, "Memory buffer overflow occurred"},
+    {ErrorCode::OUT_OF_MEMORY, "Insufficient memory available"},
+    {ErrorCode::MEMORY_POOL_NOT_FOUND, "The specified memory pool does not exist"},
+    {ErrorCode::MEMORY_POOL_ALREADY_EXISTS, "A memory pool with this ID already exists"},
+    {ErrorCode::INVALID_MEMORY_POOL, "The memory pool configuration is invalid"},
+    {ErrorCode::ALLOCATION_FAILED, "Memory allocation failed"},
+    {ErrorCode::MEMORY_ACCESS_ERROR, "Invalid memory access attempted"},
     
     // Network domain
     {ErrorCode::NETWORK_ERROR, "Generic network communication error"},

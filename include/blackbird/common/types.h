@@ -13,13 +13,11 @@
 #include <glog/logging.h>
 #include <nlohmann/json.hpp>
 
-// YLT struct_pack support - included but not required for basic serialization
-// YLT struct_pack works with POD types by default
 #ifdef YLT_ENABLE_STRUCT_PACK
 #include <ylt/struct_pack.hpp>
 #endif
 
-#include "blackbird/error/error_codes.h"
+#include "blackbird/common/error/error_codes.h"
 
 namespace blackbird {
 
@@ -47,10 +45,9 @@ ErrorCode get_error(const Result<T>& result) {
     return std::get<ErrorCode>(result);
 }
 
-// === Type Aliases (Must be defined first) ===
 using ObjectKey = std::string;
 using Version = uint64_t;
-using SegmentId = std::string;  // Use string for better readability
+using MemoryPoolId = std::string; 
 using NodeId = std::string;
 using UUID = std::pair<uint64_t, uint64_t>;
 
@@ -70,7 +67,7 @@ static constexpr int64_t DEFAULT_CLIENT_TTL_SEC = 10;
 static constexpr size_t DEFAULT_REPLICATION_FACTOR = 3;
 static constexpr size_t DEFAULT_MAX_WORKERS_PER_COPY = 4;
 
-// === Core Types for YLT struct_pack ===
+// === Core Types for struct_pack ===
 
 /**
  * @brief Storage class enumeration for YLT serialization
@@ -143,12 +140,12 @@ struct CopyPlacement {
  * @brief Configuration for worker placement
  */
 struct WorkerConfig {
-    size_t replication_factor{DEFAULT_REPLICATION_FACTOR};  // Number of copies of data (fault tolerance)
-    size_t max_workers_per_copy{DEFAULT_MAX_WORKERS_PER_COPY};                  // Max workers to shard each copy across
-    bool enable_soft_pin{false};                     // Enable soft pinning
-    std::string preferred_node{};                    // Preferred node for primary copy
-    std::vector<StorageClass> preferred_classes{};   // Preferred storage classes
-    uint64_t ttl_ms{30 * 60 * 1000};             // Time-to-live in milliseconds
+    size_t replication_factor{DEFAULT_REPLICATION_FACTOR};
+    size_t max_workers_per_copy{DEFAULT_MAX_WORKERS_PER_COPY}; // Max workers to shard each copy across
+    bool enable_soft_pin{false};                               // Enable soft pinning
+    std::string preferred_node{};                              // Preferred node for primary copy
+    std::vector<StorageClass> preferred_classes{};             // Preferred storage classes
+    uint64_t ttl_ms{30 * 60 * 1000};                           // Time-to-live in milliseconds
     
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(WorkerConfig, replication_factor, max_workers_per_copy, enable_soft_pin, preferred_node, preferred_classes, ttl_ms)
 
@@ -166,13 +163,22 @@ struct WorkerConfig {
  * @brief Cluster statistics
  */
 struct ClusterStats {
-    size_t total_workers{0};
-    size_t active_workers{0};
-    size_t total_segments{0};
-    size_t total_capacity{0};     // Total storage capacity in bytes
-    size_t used_capacity{0};      // Used storage capacity in bytes
-    size_t total_objects{0};      // Number of stored objects
-    double utilization{0.0};      // Overall cluster utilization (0.0-1.0)
+    size_t total_workers{0};    // Number of active workers
+    size_t total_memory_pools{0};     // Number of storage memory pools
+    size_t total_objects{0};    // Number of stored objects
+    size_t total_capacity{0};   // Total storage capacity in bytes
+    size_t used_capacity{0};    // Used storage capacity in bytes
+    double avg_utilization{0.0}; // Average storage utilization
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(ClusterStats, total_workers, total_memory_pools, total_objects, 
+                                   total_capacity, used_capacity, avg_utilization)
+
+    friend std::ostream& operator<<(std::ostream& os, const ClusterStats& stats) noexcept {
+        return os << "ClusterStats{workers=" << stats.total_workers 
+                  << ", memory_pools=" << stats.total_memory_pools << ", objects=" << stats.total_objects
+                  << ", capacity=" << stats.total_capacity << ", used=" << stats.used_capacity 
+                  << ", utilization=" << stats.avg_utilization << "}";
+    }
 };
 
 // === RPC Request/Response Types (Direct KeystoneService Mapping) ===
@@ -259,7 +265,7 @@ struct RemoveObjectResponse {
  * Maps to: Result<size_t> remove_all_objects()
  */
 struct RemoveAllObjectsRequest {
-    int32_t dummy{0};  // YLT struct_pack requires non-empty structs
+    int32_t dummy{0};  // struct_pack requires non-empty structs
 };
 
 struct RemoveAllObjectsResponse {
@@ -272,7 +278,7 @@ struct RemoveAllObjectsResponse {
  * Maps to: Result<ClusterStats> get_cluster_stats() const
  */
 struct GetClusterStatsRequest {
-    int32_t dummy{0};  // YLT struct_pack requires non-empty structs
+    int32_t dummy{0};  // struct_pack requires non-empty structs
 };
 
 struct GetClusterStatsResponse {
@@ -372,7 +378,7 @@ struct PingResponse {
 };
 
 /**
- * @brief Configuration for the keystone service
+ * @brief Configuration for keystone
  */
 struct KeystoneConfig {
     std::string cluster_id{DEFAULT_CLUSTER_ID};
@@ -398,7 +404,7 @@ struct KeystoneConfig {
 struct ClientConfig {
     std::string node_id;
     std::string keystone_address;
-    std::string local_address{"0.0.0.0:0"};  // Let UCX choose port
+    std::string local_address{"0.0.0.0:0"}; 
 
     size_t memory_pool_size{1ULL << 30};  // 1GB default
     std::string storage_path;  // Optional disk storage path
@@ -408,24 +414,30 @@ struct ClientConfig {
 };
 
 /**
- * @brief Represents a memory segment (chunk) in the distributed cache
+ * @brief Represents a memory pool in the distributed cache
  */
-struct Segment {
-    SegmentId id;
-    NodeId node_id;         // Node that owns this segment
-    uintptr_t base_addr{0}; // Base address of the segment
-    size_t size{0};         // Total size of the segment
+struct MemoryPool {
+    MemoryPoolId id;
+    NodeId node_id;         // Node that owns this memory pool
+    uintptr_t base_addr{0}; // Base address of the memory pool
+    size_t size{0};         // Total size of the memory pool
     size_t used{0};         // Currently used space
-    UcxAddress ucx_address; // UCX worker address for this segment
+    UcxAddress ucx_address; // UCX worker address for this memory pool
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Segment, id, node_id, base_addr, size, used, ucx_address)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(MemoryPool, id, node_id, base_addr, size, used, ucx_address)
 
     double utilization() const noexcept {
-        return size > 0 ? static_cast<double>(used) / size : 0.0;
+        return size > 0 ? static_cast<double>(used) / static_cast<double>(size) : 0.0;
     }
 
     size_t available() const noexcept {
         return size > used ? size - used : 0;
+    }
+
+    friend std::ostream& operator<<(std::ostream& os, const MemoryPool& memory_pool) noexcept {
+        return os << "MemoryPool{id=" << memory_pool.id << ", node=" << memory_pool.node_id
+                  << ", size=" << memory_pool.size << ", used=" << memory_pool.used 
+                  << ", available=" << memory_pool.available() << "}";
     }
 };
 

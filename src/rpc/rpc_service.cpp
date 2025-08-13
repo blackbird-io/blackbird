@@ -1,4 +1,4 @@
-#include "blackbird/rpc_service.h"
+#include "blackbird/rpc/rpc_service.h"
 
 #include <glog/logging.h>
 
@@ -16,7 +16,6 @@ RpcService::~RpcService() {
 }
 
 ErrorCode RpcService::start() {
-    LOG(INFO) << "Starting RpcService...";
     
     if (running_.load()) {
         LOG(WARNING) << "RpcService is already running";
@@ -67,7 +66,6 @@ void RpcService::stop() {
     LOG(INFO) << "RpcService stopped";
 }
 
-// === Internal domain forwards (KeystoneService delegation) ===
 Result<bool> RpcService::object_exists(const ObjectKey& key) {
     return handle_service_call<bool>([&]() { return keystone_service_->object_exists(key); });
 }
@@ -134,7 +132,6 @@ std::vector<Result<std::vector<CopyPlacement>>> RpcService::batch_put_start(
     const std::vector<size_t>& data_sizes,
     const WorkerConfig& config) {
     try {
-        // Convert to the format expected by KeystoneService
         std::vector<std::pair<ObjectKey, std::pair<size_t, WorkerConfig>>> requests;
         requests.reserve(keys.size());
         for (size_t i = 0; i < keys.size() && i < data_sizes.size(); ++i) {
@@ -191,7 +188,6 @@ ErrorCode RpcService::setup_rpc_server() {
         rpc_server_ = std::make_unique<coro_rpc::coro_rpc_server>(1, std::stoi(port_str));
         register_rpc_methods();
         
-        // Start the RPC server in a background thread
         rpc_server_thread_ = std::thread([this]() {
             LOG(INFO) << "Starting RPC server...";
             auto err = rpc_server_->start();
@@ -202,7 +198,6 @@ ErrorCode RpcService::setup_rpc_server() {
             }
         });
         
-        // Give the server a moment to start
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         
         LOG(INFO) << "RPC server started and listening on " << config_.listen_address;
@@ -230,7 +225,6 @@ ErrorCode RpcService::setup_http_server() {
     }
 }
 
-// === YLT RPC Endpoints (Direct KeystoneService Pass-through) ===
 ObjectExistsResponse RpcService::rpc_object_exists(ObjectExistsRequest request) {
     ObjectExistsResponse response;
     auto result = keystone_service_->object_exists(request.key);
@@ -371,7 +365,7 @@ void RpcService::register_rpc_methods() {
     
     LOG(INFO) << "Registering YLT RPC methods (direct KeystoneService pass-through)...";
     
-    // Register all RPC methods - direct pass-through to KeystoneService
+    // Register all RPC methods
     rpc_server_->register_handler<&RpcService::rpc_object_exists>(this);
     rpc_server_->register_handler<&RpcService::rpc_get_workers>(this);
     rpc_server_->register_handler<&RpcService::rpc_put_start>(this);

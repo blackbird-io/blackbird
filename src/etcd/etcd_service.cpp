@@ -1,4 +1,4 @@
-#include "blackbird/etcd_service.h"
+#include "blackbird/etcd/etcd_service.h"
 
 #include <glog/logging.h>
 
@@ -35,7 +35,6 @@ EtcdService::EtcdService(const std::string& endpoints)
         endpoints_copy.erase(0, pos + delimiter.length());
     }
     
-    // Don't forget the last endpoint
     endpoints_copy.erase(0, endpoints_copy.find_first_not_of(" \t"));
     endpoints_copy.erase(endpoints_copy.find_last_not_of(" \t") + 1);
     if (!endpoints_copy.empty()) {
@@ -56,7 +55,7 @@ EtcdService::~EtcdService() {
     
     // Reset connection state
     connected_ = false;
-    
+
     // Client will be automatically cleaned up when impl_ is destroyed
 }
 
@@ -69,10 +68,8 @@ ErrorCode EtcdService::connect() {
     }
     
     try {
-        // Create etcd sync client with the first endpoint
         impl_->client = std::make_unique<etcd::SyncClient>(impl_->endpoint_list.front());
         
-        // Test connection with a simple operation
         auto response = impl_->client->head();
         if (!response.is_ok()) {
             LOG(ERROR) << "Failed to connect to etcd: " << response.error_message();
@@ -273,8 +270,8 @@ ErrorCode EtcdService::watch_prefix(const std::string& prefix, EtcdWatchCallback
                 for (size_t i = 0; i < response.events().size(); ++i) {
                     const auto& event = response.events()[i];
                     std::string key = event.kv().key();
-                    std::string value = event.kv().as_string(); // Use as_string() method
-                    bool is_delete = (event.event_type() == etcd::Event::EventType::DELETE_); // Use DELETE_ not DELETE
+                    std::string value = event.kv().as_string();
+                    bool is_delete = (event.event_type() == etcd::Event::EventType::DELETE_);
                     
                     callback(key, value, is_delete);
                 }
@@ -285,7 +282,6 @@ ErrorCode EtcdService::watch_prefix(const std::string& prefix, EtcdWatchCallback
         
         auto watcher = std::make_unique<etcd::Watcher>(*impl_->client, prefix, watcher_callback, true); // true for recursive/prefix watch
         
-        // Store the watcher to keep it alive
         impl_->watchers[prefix] = std::move(watcher);
         
         LOG(INFO) << "Started watching prefix: " << prefix;

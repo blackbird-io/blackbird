@@ -225,7 +225,7 @@ if (is_ok(stats)) {
 
 ### Health Checks
 - **Client Heartbeats**: Regular ping operations
-- **Segment Monitoring**: Memory segment health
+- **Chunk Monitoring**: Memory chunk health
 - **Automatic Recovery**: Failed client cleanup
 
 ## Development

@@ -7,8 +7,8 @@
 #include <ylt/coro_rpc/coro_rpc_server.hpp>
 #include <ylt/coro_http/coro_http_server.hpp>
 
-#include "blackbird/types.h"
-#include "blackbird/keystone_service.h"
+#include "blackbird/common/types.h"
+#include "blackbird/keystone/keystone_service.h"
 
 namespace blackbird {
 
@@ -22,7 +22,7 @@ namespace blackbird {
  * - HTTP metrics endpoint
  * - Server lifecycle management
  *
- * Uses YLT's native struct_pack serialization for maximum performance.
+ * Uses struct_pack serialization for maximum performance.
  * All network endpoints use structured request/response types for type safety.
  */
 class RpcService {

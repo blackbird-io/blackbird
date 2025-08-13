@@ -2,11 +2,11 @@ find_package(glog REQUIRED)
 
 # Explicit source file listing - no wildcards for maintainable builds
 set(BLACKBIRD_SOURCES
-    keystone_service.cpp
-    rpc_service.cpp
-    etcd_service.cpp
-    types.cpp
-    error/error_codes.cpp
+    keystone/keystone_service.cpp
+    rpc/rpc_service.cpp
+    etcd/etcd_service.cpp
+    common/types.cpp
+    common/error/error_codes.cpp
 )
 
 # Create the blackbird library
