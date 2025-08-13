@@ -13,7 +13,7 @@
 #include <errno.h>
 #include <cstring>
 
-#include "blackbird/types.h"
+#include "blackbird/common/types.h"
 
 using namespace blackbird;
 

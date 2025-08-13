@@ -9,8 +9,8 @@
 #include <atomic>
 #include <chrono>
 
-#include "blackbird/types.h"
-#include "blackbird/etcd_service.h"
+#include "blackbird/common/types.h"
+#include "blackbird/etcd/etcd_service.h"
 
 namespace blackbird {
 
@@ -19,14 +19,14 @@ namespace blackbird {
  */
 struct ObjectInfo {
     ObjectKey key;
-    size_t size{0};                               // Object size in bytes
+    size_t size{0};                               
     std::chrono::system_clock::time_point created;
     std::chrono::system_clock::time_point last_accessed;
-    WorkerConfig config;                          // Configuration used for this object
-    std::vector<CopyPlacement> copies;           // Data copies (replication factor)
+    WorkerConfig config;                         
+    std::vector<CopyPlacement> copies;           
     
     bool is_expired() const {
-        if (config.ttl_ms == 0) return false;  // No expiration
+        if (config.ttl_ms == 0) return false;
         auto now = std::chrono::system_clock::now();
         auto age = std::chrono::duration_cast<std::chrono::milliseconds>(now - created);
         return age.count() > static_cast<int64_t>(config.ttl_ms);
@@ -38,7 +38,7 @@ struct ObjectInfo {
     
     bool has_complete_copy() const noexcept {
         return std::any_of(copies.begin(), copies.end(), [](const CopyPlacement& copy) {
-            return !copy.shards.empty(); // Simple check - has shards means complete
+            return !copy.shards.empty(); 
         });
     }
     
@@ -62,7 +62,7 @@ struct WorkerInfo {
     std::string worker_id;           // Worker identifier
     NodeId node_id;                  // Physical node ID
     std::string endpoint;            // Network endpoint
-    std::unordered_map<std::string, Segment> chunks;  // chunk_id -> Chunk metadata
+    std::unordered_map<std::string, MemoryPool> memory_pools;  // memory_pool_id -> MemoryPool metadata
     std::chrono::steady_clock::time_point last_heartbeat;
     bool is_healthy{true};
     
@@ -121,8 +121,6 @@ public:
      */
     bool is_running() const noexcept { return running_.load(); }
     
-    // === Object Management ===
-    
     /**
      * @brief Check if an object exists
      * @param key Object key
@@ -176,17 +174,21 @@ public:
     Result<size_t> remove_all_objects();
     
     /**
-     * Readonly snapshot of all objects/storage systems mounted on the cluster.
-     */
-    ErrorCode get_chunks(std::vector<Segment>& chunks) const;
-    ErrorCode remove_worker(const std::string& worker_id);
-    
-    /**
      * @brief Get worker information (read-only view from ETCD)
      * @param workers Output parameter for worker information
      * @return ErrorCode::OK on success
      */
     ErrorCode get_workers_info(std::vector<WorkerInfo>& workers) const;
+    
+    /**
+     * @brief Get all storage memory pools in the cluster
+     * @param memory_pools Output vector to store memory pool information
+     * @return ErrorCode::OK on success
+     * 
+     * Readonly snapshot of all memory pools/storage systems mounted on the cluster.
+     */
+    ErrorCode get_memory_pools(std::vector<MemoryPool>& memory_pools) const;
+    ErrorCode remove_worker(const std::string& worker_id);
     
     // === Batch RPC Methods ===
     
@@ -251,31 +253,28 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<ViewVersionId> view_version_{0};
     
-    // Chunk information from ETCD (read-only view) - using 'Segment' type for compatibility
-    mutable std::shared_mutex chunks_mutex_;
-    std::unordered_map<SegmentId, Segment> chunks_;   // Aggregated view of chunks from all workers
-    
     // Object metadata
     mutable std::shared_mutex objects_mutex_;
     std::unordered_map<ObjectKey, ObjectInfo> objects_;
+    
+    // Memory Pool information from ETCD
+    mutable std::shared_mutex memory_pools_mutex_;
+    std::unordered_map<MemoryPoolId, MemoryPool> memory_pools_;   // Aggregated view of memory pools from all workers
     
     // Background threads
     std::thread gc_thread_;
     std::thread health_check_thread_;
     std::thread etcd_keepalive_thread_;
     
-    // ETCD lease management - CRITICAL for fault tolerance and service discovery
-    // The lease ensures automatic cleanup if keystone crashes (TTL-based expiration)
-    // and provides service discovery for other nodes to find active keystones
+    // ETCD lease management
     EtcdLeaseId keystone_lease_id_{0};
     
     // Worker registry tracking from ETCD
     mutable std::shared_mutex worker_registry_mutex_;
-    std::unordered_map<std::string, WorkerInfo> workers_;        // worker_id -> WorkerInfo
+    std::unordered_map<std::string, WorkerInfo> workers_;
     mutable std::shared_mutex heartbeat_mutex_;
     std::unordered_map<std::string, std::chrono::steady_clock::time_point> worker_heartbeats_;
     
-    // Helper methods
     ErrorCode allocate_data_copies(const ObjectKey& key, size_t data_size, 
                                   const WorkerConfig& config,
                                   std::vector<CopyPlacement>& copies);
@@ -296,34 +295,28 @@ private:
     void run_health_checks();
     void run_etcd_keepalive();
     
-    // Helper methods
     std::string make_etcd_key(const std::string& suffix) const;
 
-    // Small helpers
-    std::string chunks_prefix() const { return make_etcd_key("chunks/"); }
+    std::string memory_pools_prefix() const { return make_etcd_key("memory_pools/"); }
     std::string workers_prefix() const { return make_etcd_key("workers/"); }
     std::string heartbeat_prefix() const { return make_etcd_key("heartbeat/"); }
 
-    // Etcd key builders for new worker layout
     std::string make_worker_key(const std::string& worker_id) const;
-    std::string make_worker_chunk_key(const std::string& worker_id, const std::string& chunk_id) const;
+    std::string make_worker_memory_pool_key(const std::string& worker_id, const std::string& memory_pool_id) const;
     std::string make_heartbeat_key(const std::string& worker_id) const;
 
-    // Parsing helpers
-    void upsert_chunk_from_json(const std::string& key, const std::string& json_value);
-    void remove_chunk_by_key(const std::string& key);
+    void upsert_memory_pool_from_json(const std::string& key, const std::string& json_value);
+    void remove_memory_pool_by_key(const std::string& key);
 
-    // Worker management via etcd
     void watch_worker_registry_namespace();
     void watch_heartbeat_namespace();
     void upsert_worker_from_json(const std::string& key, const std::string& json_value);
     void remove_worker_by_key(const std::string& key);
-    void upsert_worker_chunk_from_json(const std::string& key, const std::string& json_value);
-    void remove_worker_chunk_by_key(const std::string& key);
+    void upsert_worker_memory_pool_from_json(const std::string& key, const std::string& json_value);
+    void remove_worker_memory_pool_by_key(const std::string& key);
     void update_worker_heartbeat(const std::string& key, const std::string& json_value);
     
-    // Chunk watchers
-    void watch_chunks_namespace();
+    void watch_memory_pools_namespace();
 };
 
 }  // namespace blackbird 

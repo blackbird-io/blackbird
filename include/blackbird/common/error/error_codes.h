@@ -2,7 +2,7 @@
 
 #include <cstdint>
 #include <string_view>
-#include "blackbird/error/error_domain.h"
+#include "blackbird/common/error/error_domain.h"
 
 namespace blackbird {
 namespace error {
@@ -26,9 +26,9 @@ enum class ErrorCode : uint32_t {
     // Storage domain (2000-2999)
     BUFFER_OVERFLOW = get_domain_base(Domain::STORAGE),
     OUT_OF_MEMORY,
-    SEGMENT_NOT_FOUND,
-    SEGMENT_ALREADY_EXISTS,
-    INVALID_SEGMENT,
+    MEMORY_POOL_NOT_FOUND,
+    MEMORY_POOL_ALREADY_EXISTS,
+    INVALID_MEMORY_POOL,
     ALLOCATION_FAILED,
     MEMORY_ACCESS_ERROR,
     

@@ -8,10 +8,10 @@
 #include <glog/logging.h>
 #include <nlohmann/json.hpp>
 
-#include "blackbird/types.h"
-#include "blackbird/keystone_service.h"
-#include "blackbird/rpc_service.h"
-#include "blackbird/etcd_service.h"
+#include "blackbird/common/types.h"
+#include "blackbird/keystone/keystone_service.h"
+#include "blackbird/rpc/rpc_service.h"
+#include "blackbird/etcd/etcd_service.h"
 
 using namespace blackbird;
 
@@ -137,11 +137,11 @@ int main(int argc, char* argv[]) {
                 if (is_ok(stats_result)) {
                     auto stats = get_value(stats_result);
                     LOG(INFO) << "Cluster Status: "
-                              << "workers=" << stats.active_workers << "/" << stats.total_workers
-                              << ", segments=" << stats.total_segments
+                              << "workers=" << stats.total_workers 
+                              << ", memory_pools=" << stats.total_memory_pools
                               << ", objects=" << stats.total_objects
                               << ", utilization=" << std::fixed << std::setprecision(1) 
-                              << (stats.utilization * 100.0) << "%";
+                              << (stats.avg_utilization * 100.0) << "%";
                 } else {
                     LOG(WARNING) << "Failed to get cluster stats: " << error::to_string(get_error(stats_result));
                 }

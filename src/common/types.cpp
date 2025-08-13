@@ -1,4 +1,4 @@
-#include "blackbird/types.h"
+#include "blackbird/common/types.h"
 
 #include <random>
 #include <thread>
