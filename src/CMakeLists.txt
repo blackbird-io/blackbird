@@ -1,16 +1,17 @@
 find_package(glog REQUIRED)
 
-# Explicit source file listing - no wildcards for maintainable builds
+# Source files for blackbird library
 set(BLACKBIRD_SOURCES
     keystone/keystone_service.cpp
     rpc/rpc_service.cpp
     etcd/etcd_service.cpp
-    common/types.cpp
+    worker/worker_service.cpp
+    worker/storage/ram_backend.cpp
     common/error/error_codes.cpp
 )
 
-# Create the blackbird library
-add_library(blackbird STATIC ${BLACKBIRD_SOURCES})
+# Build the main blackbird library
+add_library(blackbird ${BLACKBIRD_SOURCES})
 
 # Include directories
 target_include_directories(blackbird PUBLIC
@@ -20,20 +21,15 @@ target_include_directories(blackbird PUBLIC
 # Link libraries
 target_link_libraries(blackbird PUBLIC
     glog::glog
-    etcd-cpp-api-core
-    cpprest
     nlohmann_json::nlohmann_json
+    etcd-cpp-api-core
+    yalantinglibs::yalantinglibs
 )
 
-# Compiler definitions
-target_compile_definitions(blackbird PRIVATE 
-    GLOG_NO_ABBREVIATED_SEVERITIES
+# Preprocessor definitions
+target_compile_definitions(blackbird PUBLIC
     BLACKBIRD_USE_ETCD
 )
 
-# Set target properties
-set_target_properties(blackbird PROPERTIES
-    CXX_STANDARD 20
-    CXX_STANDARD_REQUIRED ON
-    POSITION_INDEPENDENT_CODE ON
-) 
+# Compiler features
+target_compile_features(blackbird PUBLIC cxx_std_20) 
