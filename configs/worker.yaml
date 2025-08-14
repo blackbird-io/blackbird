@@ -1,0 +1,43 @@
+# Blackbird Worker Configuration
+worker:
+  # Identity
+  worker_id: "worker-1"
+  node_id: "node-1" 
+  cluster_id: "blackbird_cluster"
+  
+  # Connectivity
+  etcd_endpoints:
+    - "localhost:2379"
+  rpc_endpoint: "0.0.0.0:0"  # Auto-assign port
+  ucx_endpoint: ""
+  interconnects:
+    - "tcp"
+    # - "rdma"
+    # - "nvlink"
+  
+  # Capabilities
+  max_bw_gbps: 10
+  numa_node: 0
+  version: "1.0.0"
+  
+  # Operational
+  lease_ttl_sec: 30
+  heartbeat_interval_sec: 10
+
+# Storage Pools Configuration
+storage_pools:
+  # RAM Pool
+  - pool_id: "ram_pool_0"
+    storage_class: "RAM_CPU"
+    size_bytes: 2147483648  # 2GB
+    
+  # Example: Add more pools as needed
+  # - pool_id: "nvme_pool_0" 
+  #   storage_class: "NVME"
+  #   size_bytes: 107374182400  # 100GB
+  #   mount_path: "/mnt/nvme0"
+  #
+  # - pool_id: "gpu_pool_0"
+  #   storage_class: "RAM_GPU" 
+  #   size_bytes: 8589934592   # 8GB
+  #   gpu_device_id: 0 

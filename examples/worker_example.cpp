@@ -3,7 +3,6 @@
 #include <glog/logging.h>
 
 #include "blackbird/worker/worker_service.h"
-#include "blackbird/worker/storage/storage_backend.h"
 
 using namespace blackbird;
 
@@ -20,15 +19,13 @@ void signal_handler(int signal) {
 void print_usage(const char* program_name) {
     std::cout << "Usage: " << program_name << " [OPTIONS]\n";
     std::cout << "\nOptions:\n";
-    std::cout << "  --worker-id <id>          Unique worker identifier (required)\n";
-    std::cout << "  --node-id <id>            Physical node identifier (required)\n";
-    std::cout << "  --etcd-endpoints <eps>    Comma-separated etcd endpoints (default: localhost:2379)\n";
-    std::cout << "  --cluster-id <id>         Cluster identifier (default: blackbird_cluster)\n";
-    std::cout << "  --memory-size <bytes>     RAM memory pool size in bytes (default: 1GB)\n";
-    std::cout << "  --storage-class <class>   Storage class: RAM_CPU, RAM_GPU (default: RAM_CPU)\n";
+    std::cout << "  --config <file>           YAML configuration file (default: ../configs/worker.yaml)\n";
+    std::cout << "  --worker-id <id>          Override worker ID from config\n";
+    std::cout << "  --node-id <id>            Override node ID from config\n";
     std::cout << "  --help                    Show this help message\n";
     std::cout << "\nExample:\n";
-    std::cout << "  " << program_name << " --worker-id worker-1 --node-id node-a --memory-size 2147483648\n";
+    std::cout << "  " << program_name << " --config /path/to/worker.yaml\n";
+    std::cout << "  " << program_name << " --worker-id worker-2 --node-id node-b\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -42,10 +39,9 @@ int main(int argc, char* argv[]) {
     signal(SIGTERM, signal_handler);
     
     // Parse command line arguments
-    WorkerServiceConfig config;
-    config.etcd_endpoints = "localhost:2379";
-    uint64_t memory_size = 1ULL << 30; // 1GB default
-    StorageClass storage_class = StorageClass::RAM_CPU;
+    std::string config_file = "../configs/worker.yaml";
+    std::string override_worker_id;
+    std::string override_node_id;
     
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
@@ -53,26 +49,12 @@ int main(int argc, char* argv[]) {
         if (arg == "--help") {
             print_usage(argv[0]);
             return 0;
+        } else if (arg == "--config" && i + 1 < argc) {
+            config_file = argv[++i];
         } else if (arg == "--worker-id" && i + 1 < argc) {
-            config.worker_id = argv[++i];
+            override_worker_id = argv[++i];
         } else if (arg == "--node-id" && i + 1 < argc) {
-            config.node_id = argv[++i];
-        } else if (arg == "--etcd-endpoints" && i + 1 < argc) {
-            config.etcd_endpoints = argv[++i];
-        } else if (arg == "--cluster-id" && i + 1 < argc) {
-            config.cluster_id = argv[++i];
-        } else if (arg == "--memory-size" && i + 1 < argc) {
-            memory_size = std::stoull(argv[++i]);
-        } else if (arg == "--storage-class" && i + 1 < argc) {
-            std::string class_str = argv[++i];
-            if (class_str == "RAM_CPU") {
-                storage_class = StorageClass::RAM_CPU;
-            } else if (class_str == "RAM_GPU") {
-                storage_class = StorageClass::RAM_GPU;
-            } else {
-                std::cerr << "Unknown storage class: " << class_str << std::endl;
-                return 1;
-            }
+            override_node_id = argv[++i];
         } else {
             std::cerr << "Unknown argument: " << arg << std::endl;
             print_usage(argv[0]);
@@ -80,45 +62,53 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    // Validate required arguments
-    if (config.worker_id.empty()) {
-        std::cerr << "Error: --worker-id is required" << std::endl;
-        print_usage(argv[0]);
-        return 1;
-    }
-    
-    if (config.node_id.empty()) {
-        std::cerr << "Error: --node-id is required" << std::endl;
-        print_usage(argv[0]);
-        return 1;
-    }
-    
-    // Print configuration
-    LOG(INFO) << "=== Blackbird Worker Configuration ===";
-    LOG(INFO) << "  Worker ID: " << config.worker_id;
-    LOG(INFO) << "  Node ID: " << config.node_id;
-    LOG(INFO) << "  Cluster ID: " << config.cluster_id;
-    LOG(INFO) << "  Etcd Endpoints: " << config.etcd_endpoints;
-    LOG(INFO) << "  Memory Size: " << memory_size << " bytes (" << (memory_size / (1024*1024)) << " MB)";
-    LOG(INFO) << "  Storage Class: " << static_cast<uint32_t>(storage_class);
-    
     try {
+        // Load configuration from YAML
+        LOG(INFO) << "Loading configuration from: " << config_file;
+        WorkerServiceConfig config;
+        auto err = load_worker_config_from_file(config_file, config);
+        if (err != ErrorCode::OK) {
+            LOG(ERROR) << "Failed to load configuration: " << error::to_string(err);
+            return 1;
+        }
+        
+        // Apply command line overrides
+        if (!override_worker_id.empty()) {
+            config.worker_id = override_worker_id;
+            LOG(INFO) << "Overriding worker_id to: " << config.worker_id;
+        }
+        if (!override_node_id.empty()) {
+            config.node_id = override_node_id;
+            LOG(INFO) << "Overriding node_id to: " << config.node_id;
+        }
+        
+        // Validate required configuration
+        if (config.worker_id.empty()) {
+            LOG(ERROR) << "worker_id is required in configuration";
+            return 1;
+        }
+        if (config.node_id.empty()) {
+            LOG(ERROR) << "node_id is required in configuration";
+            return 1;
+        }
+        
+        // Print configuration
+        LOG(INFO) << "=== Blackbird Worker Configuration ===";
+        LOG(INFO) << "  Worker ID: " << config.worker_id;
+        LOG(INFO) << "  Node ID: " << config.node_id;
+        LOG(INFO) << "  Cluster ID: " << config.cluster_id;
+        LOG(INFO) << "  Etcd Endpoints: " << config.etcd_endpoints;
+        LOG(INFO) << "  Storage Pools: " << config.storage_pools.size();
+        
         // Create worker service
         LOG(INFO) << "Creating worker service...";
         g_worker_service = std::make_shared<WorkerService>(config);
         
-        // Add memory pool
-        LOG(INFO) << "Adding memory pool...";
-        auto backend = create_storage_backend(storage_class, memory_size);
-        if (!backend) {
-            LOG(ERROR) << "Failed to create storage backend";
-            return 1;
-        }
-        
-        std::string pool_id = config.worker_id + "_pool_0";
-        auto err = g_worker_service->add_storage_pool(pool_id, std::move(backend));
+        // Create storage pools from configuration
+        LOG(INFO) << "Creating storage pools from configuration...";
+        err = g_worker_service->create_storage_pools_from_config();
         if (err != ErrorCode::OK) {
-            LOG(ERROR) << "Failed to add storage pool: " << error::to_string(err);
+            LOG(ERROR) << "Failed to create storage pools: " << error::to_string(err);
             return 1;
         }
         
@@ -139,7 +129,7 @@ int main(int argc, char* argv[]) {
         }
         
         LOG(INFO) << "Worker service started successfully!";
-        LOG(INFO) << "Worker is ready to receive allocation requests...";
+        LOG(INFO) << "Worker is ready to receive client connections...";
         LOG(INFO) << "Press Ctrl+C to stop the worker";
         
         // Wait for service to stop

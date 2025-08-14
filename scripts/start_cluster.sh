@@ -166,15 +166,13 @@ if ! wait_for_service $KEYSTONE_PORT "Keystone"; then
     exit 1
 fi
 
+# 3. Start Worker
 print_status "Starting Worker service..."
 
 ./examples/worker_example \
+    --config "../configs/worker.yaml" \
     --worker-id "localhost-worker-1" \
     --node-id "localhost" \
-    --etcd-endpoints "localhost:$ETCD_PORT" \
-    --cluster-id "$CLUSTER_ID" \
-    --memory-size "$WORKER_MEMORY_SIZE" \
-    --storage-class "RAM_CPU" \
     > /tmp/blackbird-worker.log 2>&1 &
 
 WORKER_PID=$!

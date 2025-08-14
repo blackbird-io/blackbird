@@ -5,6 +5,8 @@
 #include <chrono>
 #include <thread>
 
+#include "blackbird/worker/storage/ram_backend.h"
+
 namespace blackbird {
 
 WorkerService::WorkerService(const WorkerServiceConfig& config) 
@@ -81,7 +83,6 @@ ErrorCode WorkerService::start() {
     
     // Start background threads
     heartbeat_thread_ = std::thread(&WorkerService::run_heartbeat_loop, this);
-    allocation_watcher_thread_ = std::thread(&WorkerService::run_allocation_watcher, this);
     
     LOG(INFO) << "WorkerService started successfully";
     return ErrorCode::OK;
@@ -95,10 +96,6 @@ void WorkerService::stop() {
     // Join background threads
     if (heartbeat_thread_.joinable()) {
         heartbeat_thread_.join();
-    }
-    
-    if (allocation_watcher_thread_.joinable()) {
-        allocation_watcher_thread_.join();
     }
     
     // Shutdown storage backends
@@ -131,6 +128,53 @@ ErrorCode WorkerService::add_storage_pool(const std::string& pool_id,
     storage_pools_[pool_id] = std::move(backend);
     LOG(INFO) << "Added storage pool: " << pool_id;
     
+    return ErrorCode::OK;
+}
+
+ErrorCode WorkerService::create_storage_pools_from_config() {
+    LOG(INFO) << "Creating storage pools from configuration...";
+    
+    for (const auto& pool_config : config_.storage_pools) {
+        LOG(INFO) << "Creating pool: " << pool_config.pool_id 
+                  << " (" << static_cast<int>(pool_config.storage_class) 
+                  << ", " << pool_config.size_bytes << " bytes)";
+        
+        // Create storage backend based on storage class
+        std::unique_ptr<StorageBackend> backend;
+        
+        switch (pool_config.storage_class) {
+            case StorageClass::RAM_CPU:
+            case StorageClass::RAM_GPU:
+                backend = create_storage_backend(pool_config.storage_class, pool_config.size_bytes);
+                break;
+                
+            // TODO: Add support for other storage classes
+            // case StorageClass::NVME:
+            // case StorageClass::SSD:
+            // case StorageClass::HDD:
+            //     backend = create_disk_storage_backend(pool_config.storage_class, 
+            //                                          pool_config.size_bytes, 
+            //                                          pool_config.mount_path);
+            //     break;
+                
+            default:
+                LOG(ERROR) << "Unsupported storage class: " << static_cast<int>(pool_config.storage_class);
+                return ErrorCode::INVALID_CONFIGURATION;
+        }
+        
+        if (!backend) {
+            LOG(ERROR) << "Failed to create storage backend for pool: " << pool_config.pool_id;
+            return ErrorCode::ALLOCATION_FAILED;
+        }
+        
+        auto err = add_storage_pool(pool_config.pool_id, std::move(backend));
+        if (err != ErrorCode::OK) {
+            LOG(ERROR) << "Failed to add storage pool: " << pool_config.pool_id;
+            return err;
+        }
+    }
+    
+    LOG(INFO) << "Created " << config_.storage_pools.size() << " storage pools";
     return ErrorCode::OK;
 }
 
@@ -260,108 +304,6 @@ void WorkerService::run_heartbeat_loop() {
     LOG(INFO) << "Heartbeat loop stopped";
 }
 
-void WorkerService::run_allocation_watcher() {
-    LOG(INFO) << "Starting allocation watcher";
-    
-    std::string prefix = allocations_prefix();
-    auto callback = [this](const std::string& key, const std::string& value, bool is_delete) {
-        if (!is_delete && running_.load()) {
-            handle_allocation_intent(key, value);
-        }
-    };
-    
-    auto err = etcd_->watch_prefix(prefix, callback);
-    if (err != ErrorCode::OK) {
-        LOG(ERROR) << "Failed to setup allocation watcher: " << error::to_string(err);
-        return;
-    }
-    
-    LOG(INFO) << "Allocation watcher setup completed";
-    
-    // Keep the watcher alive
-    while (running_.load()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(config_.allocation_poll_interval_ms));
-    }
-    
-    LOG(INFO) << "Allocation watcher stopped";
-}
-
-void WorkerService::handle_allocation_intent(const std::string& key, const std::string& value) {
-    try {
-        auto intent = nlohmann::json::parse(value);
-        
-        // Check if this allocation is for us
-        std::string worker_id = intent.value("worker_id", "");
-        if (worker_id != config_.worker_id) {
-            return; // Not for us
-        }
-        
-        std::string state = intent.value("state", "");
-        if (state != "planned") {
-            return; // Already processed
-        }
-        
-        std::string pool_id = intent.value("pool_id", "");
-        uint64_t requested_size = intent.value("requested_size", 0UL);
-        
-        LOG(INFO) << "Processing allocation intent for pool " << pool_id 
-                  << ", size " << requested_size;
-        
-        // Find the storage backend
-        std::shared_lock<std::shared_mutex> lock(storage_pools_mutex_);
-        auto pool_it = storage_pools_.find(pool_id);
-        if (pool_it == storage_pools_.end()) {
-            LOG(WARNING) << "Storage pool " << pool_id << " not found";
-            
-            // Update intent to failed
-            intent["state"] = "failed";
-            intent["error"] = {{"code", static_cast<uint32_t>(ErrorCode::MEMORY_POOL_NOT_FOUND)}, 
-                              {"message", "Storage pool not found"}};
-            etcd_->put(key, intent.dump());
-            return;
-        }
-        
-        // Try to reserve space
-        auto reservation_result = pool_it->second->reserve_shard(requested_size);
-        if (!is_ok(reservation_result)) {
-            LOG(WARNING) << "Failed to reserve shard in pool " << pool_id 
-                        << ": " << error::to_string(get_error(reservation_result));
-            
-            // Update intent to failed
-            intent["state"] = "failed";
-            intent["error"] = {{"code", static_cast<uint32_t>(get_error(reservation_result))}, 
-                              {"message", "Failed to reserve shard"}};
-            etcd_->put(key, intent.dump());
-            return;
-        }
-        
-        auto token = get_value(reservation_result);
-        
-        // Update intent to reserved with reservation details
-        intent["state"] = "reserved";
-        intent["reservation"] = {
-            {"rkey", token.rkey},
-            {"remote_addr", token.remote_addr},
-            {"size", token.size},
-            {"token", token.token_id},
-            {"expires_at_ms", std::chrono::duration_cast<std::chrono::milliseconds>(
-                token.expires_at.time_since_epoch()).count()}
-        };
-        
-        auto err = etcd_->put(key, intent.dump());
-        if (err != ErrorCode::OK) {
-            LOG(ERROR) << "Failed to update allocation intent: " << error::to_string(err);
-            // Abort the reservation since we couldn't update etcd
-            pool_it->second->abort_shard(token);
-        } else {
-            LOG(INFO) << "Successfully reserved shard for allocation intent";
-        }
-        
-    } catch (const std::exception& e) {
-        LOG(ERROR) << "Exception handling allocation intent: " << e.what();
-    }
-}
-
 // Etcd key helpers
 std::string WorkerService::make_etcd_key(const std::string& suffix) const {
     return "/blackbird/clusters/" + config_.cluster_id + "/" + suffix;
@@ -377,10 +319,6 @@ std::string WorkerService::worker_pool_key(const std::string& pool_id) const {
 
 std::string WorkerService::heartbeat_key() const {
     return make_etcd_key("heartbeat/" + config_.worker_id);
-}
-
-std::string WorkerService::allocations_prefix() const {
-    return make_etcd_key("allocations/");
 }
 
 // JSON serialization helpers
@@ -413,6 +351,44 @@ nlohmann::json WorkerService::pool_to_json(const std::string& pool_id,
     pool["ucx_address"] = nlohmann::json::array();
     
     return pool;
+}
+
+// Helper function to convert string to StorageClass
+StorageClass string_to_storage_class(const std::string& str) {
+    if (str == "RAM_CPU") return StorageClass::RAM_CPU;
+    if (str == "RAM_GPU") return StorageClass::RAM_GPU;
+    if (str == "NVME") return StorageClass::NVME;
+    if (str == "SSD") return StorageClass::SSD;
+    if (str == "HDD") return StorageClass::HDD;
+    return StorageClass::RAM_CPU; // default
+}
+
+ErrorCode load_worker_config_from_file(const std::string& config_file, WorkerServiceConfig& config) {
+    // For now, just provide a simple default configuration
+    // TODO: Implement YAML parsing later
+    LOG(INFO) << "Loading default configuration (YAML parsing TODO)";
+    
+    config.cluster_id = "blackbird_cluster";
+    config.etcd_endpoints = "localhost:2379";
+    config.rpc_endpoint = "0.0.0.0:0";
+    config.ucx_endpoint = "";
+    config.interconnects = {"tcp"};
+    config.storage_classes = {StorageClass::RAM_CPU};
+    config.max_bw_gbps = 10.0;
+    config.numa_node = 0;
+    config.version = "1.0.0";
+    config.lease_ttl_sec = 30;
+    config.heartbeat_interval_sec = 10;
+    config.allocation_poll_interval_ms = 100;
+    
+    // Create a default RAM pool
+    WorkerServiceConfig::PoolConfig pool;
+    pool.pool_id = "ram_pool_0";
+    pool.storage_class = StorageClass::RAM_CPU;
+    pool.size_bytes = 2147483648; // 2GB
+    config.storage_pools.push_back(pool);
+    
+    return ErrorCode::OK;
 }
 
 } // namespace blackbird 

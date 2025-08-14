@@ -26,22 +26,33 @@ struct WorkerServiceConfig {
     std::string ucx_endpoint;                   // UCX endpoint for RDMA
     std::vector<std::string> interconnects{"tcp"}; // ["tcp", "infiniband", "nvlink"]
     
-    // Capabilities
     std::vector<StorageClass> storage_classes{StorageClass::RAM_CPU};
     double max_bw_gbps{10.0};
     int numa_node{0};
     std::string version{"1.0.0"};
     
-    // Operational
     int64_t lease_ttl_sec{30};                  // Lease TTL for etcd registration
     int64_t heartbeat_interval_sec{10};         // Heartbeat interval
     int64_t allocation_poll_interval_ms{100};   // How often to check for new allocations
+    
+    // Storage pools to create at startup
+    struct PoolConfig {
+        std::string pool_id;
+        StorageClass storage_class;
+        uint64_t size_bytes;
+        std::string mount_path; // For disk-based storage
+        int gpu_device_id{-1};  // For GPU storage
+    };
+    std::vector<PoolConfig> storage_pools;
     
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(WorkerServiceConfig, cluster_id, worker_id, node_id, etcd_endpoints,
                                    rpc_endpoint, ucx_endpoint, interconnects, storage_classes,
                                    max_bw_gbps, numa_node, version, lease_ttl_sec, 
                                    heartbeat_interval_sec, allocation_poll_interval_ms)
 };
+
+// Standalone function to load configuration from YAML file
+ErrorCode load_worker_config_from_file(const std::string& config_file, WorkerServiceConfig& config);
 
 /**
  * @brief Worker service that advertises storage pools to etcd and handles allocations
@@ -59,7 +70,6 @@ public:
      */
     ~WorkerService();
     
-    // Non-copyable, non-movable
     WorkerService(const WorkerService&) = delete;
     WorkerService& operator=(const WorkerService&) = delete;
     WorkerService(WorkerService&&) = delete;
@@ -97,6 +107,12 @@ public:
                               std::unique_ptr<StorageBackend> backend);
     
     /**
+     * @brief Create storage pools from configuration
+     * @return ErrorCode::OK on success
+     */
+    ErrorCode create_storage_pools_from_config();
+    
+    /**
      * @brief Get worker statistics
      * @return Worker stats including pool utilization
      */
@@ -117,22 +133,18 @@ private:
     
     // Background threads
     std::thread heartbeat_thread_;
-    std::thread allocation_watcher_thread_;
     
     // Private methods
     ErrorCode setup_etcd_connection();
     ErrorCode register_worker();
     ErrorCode register_storage_pools();
     void run_heartbeat_loop();
-    void run_allocation_watcher();
-    void handle_allocation_intent(const std::string& key, const std::string& value);
     
     // Etcd key helpers
     std::string make_etcd_key(const std::string& suffix) const;
     std::string workers_key() const;
     std::string worker_pool_key(const std::string& pool_id) const;
     std::string heartbeat_key() const;
-    std::string allocations_prefix() const;
     
     // JSON serialization helpers
     nlohmann::json worker_info_to_json() const;
