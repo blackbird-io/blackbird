@@ -28,6 +28,10 @@ set_target_properties(worker_example PROPERTIES
     CXX_STANDARD_REQUIRED ON
 )
 
-install(TARGETS keystone_example simple_client_test worker_example
+add_executable(ucx_client ../clients/ucx_client.cpp)
+
+target_link_libraries(ucx_client PRIVATE blackbird)
+
+install(TARGETS keystone_example simple_client_test worker_example ucx_client
     RUNTIME DESTINATION bin
 ) 

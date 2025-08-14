@@ -12,7 +12,6 @@ namespace blackbird {
 struct EtcdService::Impl {
     std::unique_ptr<etcd::SyncClient> client;
     std::unordered_map<std::string, std::unique_ptr<etcd::Watcher>> watchers;
-    std::unordered_map<EtcdLeaseId, std::unique_ptr<etcd::KeepAlive>> keep_alives;
     std::vector<std::string> endpoint_list;
 };
 
@@ -49,9 +48,8 @@ EtcdService::EtcdService(const std::string& endpoints)
 EtcdService::~EtcdService() {
     std::lock_guard<std::mutex> lock(mutex_);
     
-    // Cleanup watches and keep-alives first
+    // Cleanup watches
     impl_->watchers.clear();
-    impl_->keep_alives.clear();
     
     // Reset connection state
     connected_ = false;
@@ -187,6 +185,7 @@ ErrorCode EtcdService::grant_lease(int64_t ttl_seconds, EtcdLeaseId& lease_id) {
         }
         
         lease_id = response.value().lease();
+        LOG(INFO) << "Granted lease " << lease_id << " with TTL " << ttl_seconds << " seconds";
         return ErrorCode::OK;
         
     } catch (const std::exception& e) {
@@ -199,7 +198,7 @@ ErrorCode EtcdService::put_with_lease(const std::string& key, const std::string&
     std::lock_guard<std::mutex> lock(mutex_);
     if (!connected_) return ErrorCode::ETCD_ERROR;
     try {
-        auto response = impl_->client->set(key, value, lease_id);
+        auto response = impl_->client->put(key, value, lease_id);
         if (!response.is_ok()) {
             LOG(ERROR) << "Failed to put key '" << key << "' with lease " << lease_id << ": " << response.error_message();
             return ErrorCode::ETCD_ERROR;
@@ -216,16 +215,27 @@ ErrorCode EtcdService::put_with_lease(const std::string& key, const std::string&
 ErrorCode EtcdService::keep_alive(EtcdLeaseId lease_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!connected_) return ErrorCode::ETCD_ERROR;
+    
     try {
-        // Create a keep-alive if it doesn't exist
-        if (impl_->keep_alives.find(lease_id) == impl_->keep_alives.end()) {
-            impl_->keep_alives[lease_id] = std::make_unique<etcd::KeepAlive>(*impl_->client, lease_id);
+        // Just check if lease is still valid
+        auto ttl_resp = impl_->client->leasetimetolive(lease_id);
+        if (!ttl_resp.is_ok()) {
+            LOG(WARNING) << "Failed to check TTL for lease " << lease_id 
+                        << ": " << ttl_resp.error_message();
+            return ErrorCode::ETCD_ERROR;
         }
-        
+
+        auto current_ttl = ttl_resp.value().ttl();
+        if (current_ttl <= 0) {
+            LOG(WARNING) << "Lease " << lease_id << " expired (TTL=" << current_ttl << ")";
+            return ErrorCode::ETCD_ERROR;
+        }
+
+        LOG(DEBUG) << "Lease " << lease_id << " still valid, TTL=" << current_ttl << " seconds";
         return ErrorCode::OK;
-        
+
     } catch (const std::exception& e) {
-        LOG(ERROR) << "Exception while setting up keep-alive for lease " << lease_id << ": " << e.what();
+        LOG(ERROR) << "Exception in keep_alive for lease " << lease_id << ": " << e.what();
         return ErrorCode::ETCD_ERROR;
     }
 }
@@ -234,18 +244,13 @@ ErrorCode EtcdService::revoke_lease(EtcdLeaseId lease_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!connected_) return ErrorCode::ETCD_ERROR;
     try {
-        // Stop keep-alive if it exists
-        auto it = impl_->keep_alives.find(lease_id);
-        if (it != impl_->keep_alives.end()) {
-            impl_->keep_alives.erase(it);
-        }
-        
         auto response = impl_->client->leaserevoke(lease_id);
         if (!response.is_ok()) {
             LOG(ERROR) << "Failed to revoke lease " << lease_id << ": " << response.error_message();
             return ErrorCode::ETCD_ERROR;
         }
         
+        LOG(INFO) << "Successfully revoked lease " << lease_id;
         return ErrorCode::OK;
         
     } catch (const std::exception& e) {
@@ -366,6 +371,11 @@ std::string EtcdService::make_service_key(const std::string& service_name, const
 
 std::string EtcdService::make_leader_key(const std::string& election_name) const {
     return "/blackbird/elections/" + election_name + "/leader";
+}
+
+ErrorCode EtcdService::refresh_lease(int64_t ttl_seconds, EtcdLeaseId& new_lease_id) {
+    // Grant a fresh lease to replace the old one
+    return grant_lease(ttl_seconds, new_lease_id);
 }
 
 } // namespace blackbird 

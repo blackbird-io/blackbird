@@ -123,10 +123,27 @@ std::string UcxEngine::start_listener(const std::string& host, uint16_t port) {
         return {};
     }
 
+    // Query the actual bound sockaddr (port may be auto-assigned)
+    ucp_listener_attr_t attr;
+    std::memset(&attr, 0, sizeof(attr));
+    attr.field_mask = UCP_LISTENER_ATTR_FIELD_SOCKADDR;
+    st = ucp_listener_query(listener_, &attr);
+    if (st != UCS_OK) {
+        LOG(WARNING) << "ucp_listener_query failed: " << ucs_status_string(st) << "; using requested addr";
+    }
+
+    // Determine address to report
+    const sockaddr_in* bound = nullptr;
+    if (st == UCS_OK && attr.sockaddr.ss_family == AF_INET) {
+        bound = reinterpret_cast<const sockaddr_in*>(&attr.sockaddr);
+    }
+
     char ip_str[INET_ADDRSTRLEN]{};
-    inet_ntop(AF_INET, &sa.sin_addr, ip_str, sizeof(ip_str));
+    const sockaddr_in* to_report = bound ? bound : &sa;
+    inet_ntop(AF_INET, &(to_report->sin_addr), ip_str, sizeof(ip_str));
+
     std::ostringstream oss;
-    oss << (host.empty() ? ip_str : host) << ":" << ntohs(sa.sin_port);
+    oss << (host.empty() ? ip_str : host) << ":" << ntohs(to_report->sin_port);
     return oss.str();
 }
 

@@ -126,6 +126,14 @@ public:
      */
     ErrorCode revoke_lease(EtcdLeaseId lease_id);
     
+    /**
+     * @brief Refresh a lease by granting a new one with the same TTL
+     * @param ttl_seconds TTL in seconds for the new lease
+     * @param new_lease_id Output parameter for the new lease ID
+     * @return ErrorCode::OK on success
+     */
+    ErrorCode refresh_lease(int64_t ttl_seconds, EtcdLeaseId& new_lease_id);
+    
     // === Watch Operations ===
     
     /**
