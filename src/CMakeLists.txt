@@ -7,6 +7,7 @@ set(BLACKBIRD_SOURCES
     etcd/etcd_service.cpp
     worker/worker_service.cpp
     worker/storage/ram_backend.cpp
+    transport/ucx_engine.cpp
     common/error/error_codes.cpp
 )
 
@@ -24,6 +25,8 @@ target_link_libraries(blackbird PUBLIC
     nlohmann_json::nlohmann_json
     etcd-cpp-api-core
     yalantinglibs::yalantinglibs
+    yaml-cpp
+    ${UCX_LIBRARIES}
 )
 
 # Preprocessor definitions

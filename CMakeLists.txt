@@ -31,6 +31,9 @@ find_package(etcd-cpp-api REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GLOG REQUIRED libglog)
 
+# yaml-cpp for configuration parsing
+find_package(yaml-cpp REQUIRED)
+
 include(FetchContent)
 
 FetchContent_Declare(
