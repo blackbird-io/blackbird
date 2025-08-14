@@ -215,7 +215,9 @@ Result<std::vector<CopyPlacement>> KeystoneService::put_start(const ObjectKey& k
     object_info.created = std::chrono::system_clock::now();
     object_info.last_accessed = object_info.created;
     object_info.config = config;
-    object_info.copies = std::move(copies);
+    
+    // Store a copy of placements in the object, but return the local vector
+    object_info.copies = copies;
     
     objects_[key] = std::move(object_info);
     
@@ -223,7 +225,7 @@ Result<std::vector<CopyPlacement>> KeystoneService::put_start(const ObjectKey& k
     
     increment_view_version();
     
-    return object_info.copies;
+    return copies;
 }
 
 ErrorCode KeystoneService::put_complete(const ObjectKey& key) {
@@ -528,6 +530,7 @@ ErrorCode KeystoneService::allocate_shards_for_copy(const ObjectKey& key, size_t
     size_t workers_to_use = std::min(max_workers, available_memory_pools.size());
     size_t shard_size = data_size / workers_to_use;
     size_t remainder = data_size % workers_to_use;
+    std::cout<< "DEBUG: Data size: " << data_size <<std::endl;
     std::cout<< "DEBUG: Workers to use: " << workers_to_use <<std::endl;
     std::cout<< "DEBUG: Shard size: " << shard_size <<std::endl;
     std::cout<< "DEBUG: Remainder: " << remainder <<std::endl;  

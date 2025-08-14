@@ -7,6 +7,9 @@
 #include <cstring>
 #include <iostream>
 #include <thread>
+#include <iomanip>
+#include <sstream>
+#include <chrono>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -43,10 +46,14 @@ static bool fetch_any_pool_from_etcd(const std::string& endpoints, const std::st
 	if (etcd.connect() != ErrorCode::OK) return false;
 	std::vector<std::string> keys, values;
 	if (etcd.get_with_prefix("/blackbird/clusters/" + cluster_id + "/workers/", keys, values) != ErrorCode::OK) return false;
+	LOG(INFO) << "Found " << keys.size() << " keys in etcd";
 	for (size_t i = 0; i < keys.size(); ++i) {
+		LOG(INFO) << "Key[" << i << "]: " << keys[i];
 		if (keys[i].find("/memory_pools/") == std::string::npos) continue;
+		LOG(INFO) << "Processing memory pool: " << keys[i];
 		try {
 			auto j = nlohmann::json::parse(values[i]);
+			LOG(INFO) << "Parsed JSON: " << j.dump();
 			std::string ep = j.value("ucx_endpoint", std::string{});
 			if (ep.rfind("0.0.0.0:", 0) == 0) {
 				// Replace wildcard with localhost for local test
@@ -54,14 +61,19 @@ static bool fetch_any_pool_from_etcd(const std::string& endpoints, const std::st
 			}
 			uint64_t addr = j.value("ucx_remote_addr", 0ULL);
 			std::string rkey_hex = j.value("ucx_rkey_hex", std::string{});
+			LOG(INFO) << "Extracted: ep=" << ep << ", addr=" << addr << ", rkey_hex=" << rkey_hex;
 			out.ucx_endpoint = ep;
 			out.remote_addr = addr;
 			out.size = j.value("size", 0ULL);
 			out.rkey_raw = hex_to_bytes(rkey_hex);
 			if (!out.ucx_endpoint.empty() && out.remote_addr != 0 && !out.rkey_raw.empty()) {
+				LOG(INFO) << "Successfully found pool!";
 				return true;
 			}
-		} catch (...) {
+			LOG(INFO) << "Pool validation failed - ep empty: " << out.ucx_endpoint.empty() 
+					  << ", addr zero: " << (out.remote_addr == 0) << ", rkey empty: " << out.rkey_raw.empty();
+		} catch (const std::exception& e) {
+			LOG(ERROR) << "JSON parse error: " << e.what();
 		}
 	}
 	return false;
@@ -107,6 +119,11 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
+	// Statistics tracking
+	auto test_start = std::chrono::high_resolution_clock::now();
+	auto rpc_start = std::chrono::high_resolution_clock::now();
+	size_t bytes_sent = 0, bytes_received = 0;
+
 	// 1) Contact Keystone for placement (put_start)
 	coro_rpc::coro_rpc_client client;
 	auto ec = async_simple::coro::syncAwait(client.connect(keystone_host, std::to_string(keystone_port)));
@@ -133,6 +150,9 @@ int main(int argc, char** argv) {
 		return 4;
 	}
 	LOG(INFO) << "Keystone provided placements: copies=" << resp.copies.size();
+
+	auto rpc_end = std::chrono::high_resolution_clock::now();
+	auto ucx_setup_start = std::chrono::high_resolution_clock::now();
 
 	PoolInfo pool;
 	if (!fetch_any_pool_from_etcd(etcd_endpoints, cluster_id, pool)) {
@@ -168,8 +188,38 @@ int main(int argc, char** argv) {
 	st = ucp_ep_rkey_unpack(ep, rkey_buf, &rkey);
 	if (st != UCS_OK) { LOG(ERROR) << "ucp_ep_rkey_unpack failed: " << ucs_status_string(st); ucp_ep_destroy(ep); ucp_worker_destroy(worker); ucp_cleanup(context); return 10; }
 
-	// 6) Prepare local buffer and RMA PUT
-	std::vector<uint8_t> data(4096, 0xAB);
+	auto ucx_setup_end = std::chrono::high_resolution_clock::now();
+	auto put_start = std::chrono::high_resolution_clock::now();
+
+	// 6) Prepare local buffer with recognizable pattern and RMA PUT
+	std::vector<uint8_t> data(64); // Smaller size for clear display
+	// Create recognizable pattern: "BLACKBIRD_TEST_DATA_" + incrementing bytes
+	std::string pattern = "BLACKBIRD_TEST_DATA_";
+	for (size_t i = 0; i < data.size(); ++i) {
+		if (i < pattern.size()) {
+			data[i] = static_cast<uint8_t>(pattern[i]);
+		} else {
+			data[i] = static_cast<uint8_t>(i % 256);
+		}
+	}
+	
+	// Show what we're sending
+	LOG(INFO) << "Sending " << data.size() << " bytes:";
+	std::ostringstream sent_hex;
+	for (size_t i = 0; i < std::min(data.size(), size_t(32)); ++i) {
+		sent_hex << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(data[i]) << " ";
+	}
+	if (data.size() > 32) sent_hex << "...";
+	LOG(INFO) << "Sent data (hex): " << sent_hex.str();
+	
+	std::string sent_ascii;
+	for (size_t i = 0; i < std::min(data.size(), size_t(32)); ++i) {
+		char c = static_cast<char>(data[i]);
+		sent_ascii += (c >= 32 && c <= 126) ? c : '.';
+	}
+	if (data.size() > 32) sent_ascii += "...";
+	LOG(INFO) << "Sent data (ascii): " << sent_ascii;
+
 	uint64_t remote_addr = pool.remote_addr; // base
 	ucp_request_param_t prm{}; // no callback (we'll flush)
 	void* req = ucp_put_nbx(ep, data.data(), data.size(), remote_addr, rkey, &prm);
@@ -189,11 +239,106 @@ int main(int argc, char** argv) {
 	if (st != UCS_OK) { LOG(ERROR) << "ucp_worker_flush failed: " << ucs_status_string(st); ucp_rkey_destroy(rkey); ucp_ep_destroy(ep); ucp_worker_destroy(worker); ucp_cleanup(context); return 13; }
 
 	LOG(INFO) << "UCX PUT succeeded (" << data.size() << " bytes)";
+	auto put_end = std::chrono::high_resolution_clock::now();
+	bytes_sent = data.size();
+	
+	auto get_start = std::chrono::high_resolution_clock::now();
+	
+	// 7) Read back the data with UCX GET to verify
+	std::vector<uint8_t> read_buffer(data.size(), 0x00); // Clear buffer
+	void* get_req = ucp_get_nbx(ep, read_buffer.data(), read_buffer.size(), remote_addr, rkey, &prm);
+	if (UCS_PTR_IS_ERR(get_req)) {
+		LOG(ERROR) << "ucp_get_nbx failed: " << ucs_status_string(UCS_PTR_STATUS(get_req));
+	} else {
+		if (get_req != nullptr) {
+			// Wait for GET completion
+			ucs_status_t get_status = UCS_INPROGRESS;
+			while (get_status == UCS_INPROGRESS) {
+				ucp_worker_progress(worker);
+				get_status = ucp_request_check_status(get_req);
+			}
+			ucp_request_free(get_req);
+			if (get_status != UCS_OK) {
+				LOG(ERROR) << "GET completion error: " << ucs_status_string(get_status);
+			}
+		}
+		
+		// Show what we received
+		LOG(INFO) << "UCX GET succeeded, received " << read_buffer.size() << " bytes:";
+		std::ostringstream recv_hex;
+		for (size_t i = 0; i < std::min(read_buffer.size(), size_t(32)); ++i) {
+			recv_hex << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(read_buffer[i]) << " ";
+		}
+		if (read_buffer.size() > 32) recv_hex << "...";
+		LOG(INFO) << "Received data (hex): " << recv_hex.str();
+		
+		std::string recv_ascii;
+		for (size_t i = 0; i < std::min(read_buffer.size(), size_t(32)); ++i) {
+			char c = static_cast<char>(read_buffer[i]);
+			recv_ascii += (c >= 32 && c <= 126) ? c : '.';
+		}
+		if (read_buffer.size() > 32) recv_ascii += "...";
+		LOG(INFO) << "Received data (ascii): " << recv_ascii;
+		
+		// Verify data integrity
+		bool match = (data == read_buffer);
+		LOG(INFO) << "Data verification: " << (match ? "PASS - data matches!" : "FAIL - data mismatch!");
+		bytes_received = read_buffer.size();
+	}
+
+	auto get_end = std::chrono::high_resolution_clock::now();
+
+	// Now as a different peer, fetch placements by key and print them
+	{
+		coro_rpc::coro_rpc_client peer_client;
+		auto ec2 = async_simple::coro::syncAwait(peer_client.connect(keystone_host, std::to_string(keystone_port)));
+		if (ec2 != coro_rpc::errc::ok) {
+			LOG(ERROR) << "Peer client failed to connect to Keystone, ec=" << (int)ec2;
+		} else {
+			auto gw = async_simple::coro::syncAwait(peer_client.call<&blackbird::RpcService::rpc_get_workers>(GetWorkersRequest{key}));
+			if (!gw.has_value()) {
+				LOG(ERROR) << "rpc_get_workers failed";
+			} else {
+				auto gw_resp = gw.value();
+				if (gw_resp.error_code != ErrorCode::OK) {
+					LOG(ERROR) << "get_workers returned error: " << (int)gw_resp.error_code;
+				} else {
+					LOG(INFO) << "Peer view: object '" << key << "' has " << gw_resp.copies.size() << " copies";
+					for (const auto& cp : gw_resp.copies) {
+						LOG(INFO) << "  copy_index=" << cp.copy_index << ", shards=" << cp.shards.size();
+						for (const auto& sh : cp.shards) {
+							LOG(INFO) << "    shard pool_id=" << sh.pool_id << ", worker_id=" << sh.worker_id
+									  << ", length=" << sh.length << ", storage_class=" << static_cast<int>(sh.storage_class);
+						}
+					}
+				}
+			}
+		}
+	}
 
 	ucp_rkey_destroy(rkey);
 	ucp_ep_destroy(ep);
 	ucp_worker_destroy(worker);
 	ucp_cleanup(context);
+
+	auto test_end = std::chrono::high_resolution_clock::now();
+
+	// Performance Statistics Summary
+	auto rpc_time = std::chrono::duration<double, std::milli>(rpc_end - rpc_start).count();
+	auto setup_time = std::chrono::duration<double, std::milli>(ucx_setup_end - ucx_setup_start).count();
+	auto put_time = std::chrono::duration<double, std::milli>(put_end - put_start).count();
+	auto get_time = std::chrono::duration<double, std::milli>(get_end - get_start).count();
+	auto total_time = std::chrono::duration<double, std::milli>(test_end - test_start).count();
+	
+	double put_throughput = bytes_sent > 0 ? (bytes_sent * 1000.0) / (put_time * 1024 * 1024) : 0.0; // MB/s
+	double get_throughput = bytes_received > 0 ? (bytes_received * 1000.0) / (get_time * 1024 * 1024) : 0.0; // MB/s
+
+	LOG(INFO) << "=== Performance Statistics ===";
+	LOG(INFO) << "Total time: " << std::fixed << std::setprecision(2) << total_time << " ms";
+	LOG(INFO) << "RPC latency: " << std::fixed << std::setprecision(2) << rpc_time << " ms";
+	LOG(INFO) << "UCX setup: " << std::fixed << std::setprecision(2) << setup_time << " ms";
+	LOG(INFO) << "Data sent: " << bytes_sent << " bytes (" << std::fixed << std::setprecision(2) << put_time << " ms, " << put_throughput << " MB/s)";
+	LOG(INFO) << "Data recv: " << bytes_received << " bytes (" << std::fixed << std::setprecision(2) << get_time << " ms, " << get_throughput << " MB/s)";
 
 	return 0;
 } 
