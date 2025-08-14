@@ -266,8 +266,8 @@ private:
     std::thread health_check_thread_;
     std::thread etcd_keepalive_thread_;
     
-    // ETCD lease management
-    EtcdLeaseId keystone_lease_id_{0};
+    // Service registration info
+    std::string service_id_;
     
     // Worker registry tracking from ETCD
     mutable std::shared_mutex worker_registry_mutex_;

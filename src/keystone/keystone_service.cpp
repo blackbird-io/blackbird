@@ -48,9 +48,8 @@ ErrorCode KeystoneService::start() {
     }
     
     running_.store(true);
-    view_version_.store(1);  // Start with version 1
+    view_version_.store(1); 
     
-    // Start background threads
     if (config_.enable_gc) {
         gc_thread_ = std::thread(&KeystoneService::run_garbage_collection, this);
     }
@@ -95,7 +94,7 @@ void KeystoneService::stop() {
 	LOG(INFO) << "Keystone service stopped";
 }
 
-// Emergency worker removal for cluster management
+// Manual worker removal for cluster management
 ErrorCode KeystoneService::remove_worker(const std::string& worker_id) {
     LOG(INFO) << "Manually removing worker from cluster: " << worker_id;
     
@@ -210,6 +209,10 @@ Result<std::vector<CopyPlacement>> KeystoneService::put_start(const ObjectKey& k
     
     // Check if object already exists
     auto it = objects_.find(key);
+    std::cout<< "Printing all objects: "<<std::endl;
+    for (const auto& [key, object] : objects_) {
+        std::cout<< "Object: "<<key << " " << object.copies.size() <<std::endl;
+    }
     if (it != objects_.end() && !it->second.is_expired()) {
         return ErrorCode::OBJECT_ALREADY_EXISTS;
     }
@@ -487,12 +490,12 @@ ErrorCode KeystoneService::allocate_data_copies(const ObjectKey& key, size_t dat
                                                std::vector<CopyPlacement>& copies) {
     copies.clear();
     
-    // Determine effective parameters
     size_t replication_factor = config.replication_factor;
     size_t max_workers_per_copy = config.max_workers_per_copy;
     
-    // Allocate each copy
+    std::cout<< "DEBUG: Checking memory pools for allocation. Total pools: " << memory_pools_.size() <<std::endl;
     for (size_t copy_id = 0; copy_id < replication_factor; ++copy_id) {
+        std::cout<< "DEBUG: Allocating copy: " << copy_id <<std::endl;
         CopyPlacement copy_placement;
         copy_placement.copy_index = copy_id;
         
@@ -516,7 +519,7 @@ ErrorCode KeystoneService::allocate_shards_for_copy(const ObjectKey& key, size_t
                                                    std::vector<ShardPlacement>& shards) {
     shards.clear();
     
-    // Simple sharding logic - divide data across available workers
+    std::cout<< "DEBUG: Allocating shards for copy: " << copy_id <<std::endl;
     std::shared_lock<std::shared_mutex> memory_pools_lock(memory_pools_mutex_);
     
     std::vector<MemoryPoolId> available_memory_pools;
@@ -528,7 +531,7 @@ ErrorCode KeystoneService::allocate_shards_for_copy(const ObjectKey& key, size_t
     memory_pools_lock.unlock();
     
     if (available_memory_pools.empty()) {
-        return ErrorCode::MEMORY_POOL_NOT_FOUND;  // Use existing error code
+        return ErrorCode::MEMORY_POOL_NOT_FOUND; 
     }
     
     // Limit workers per copy
@@ -1056,4 +1059,5 @@ void KeystoneService::cleanup_dead_worker(const std::string& worker_id) {
               << " (removed " << memory_pool_ids_to_remove.size() << " storage pools)";
 }
 
+}  // namespace blackbird 
 }  // namespace blackbird 
