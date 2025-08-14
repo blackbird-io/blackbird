@@ -98,7 +98,6 @@ void KeystoneService::stop() {
 ErrorCode KeystoneService::remove_worker(const std::string& worker_id) {
     LOG(INFO) << "Manually removing worker from cluster: " << worker_id;
     
-    // Remove from local tracking
     {
         std::unique_lock<std::shared_mutex> lock(worker_registry_mutex_);
         auto worker_it = workers_.find(worker_id);
@@ -118,29 +117,16 @@ ErrorCode KeystoneService::remove_worker(const std::string& worker_id) {
         worker_heartbeats_.erase(worker_id);
     }
     
-    // arnavb
-    // Remove from ETCD (this will trigger watchers)
     if (etcd_) {
-        // TODO: Implement delete_key in EtcdService
-        // std::string worker_key = make_worker_key(worker_id);
-        // auto err = etcd_->delete_key(worker_key);
-        // if (err != ErrorCode::OK) {
-        //     LOG(WARNING) << "Failed to remove worker from ETCD: " << error::to_string(err);
-        // }
-        
-        // Also remove heartbeat
-        // std::string heartbeat_key = make_heartbeat_key(worker_id);
-        // etcd_->delete_key(heartbeat_key);  // Best effort, ignore errors
+        // Todo: have a blacklist to prevent worker re-registration on TTL refresh in ETCD.
         LOG(ERROR) << "Worker removal from ETCD not implemented yet";
         throw std::runtime_error("Worker removal from ETCD not implemented yet");
     }
     
     increment_view_version();
-    LOG(INFO) << "Successfully removed worker: " << worker_id;
     return ErrorCode::OK;
 }
 
-// Get worker information
 ErrorCode KeystoneService::get_workers_info(std::vector<WorkerInfo>& workers) const {
     std::shared_lock<std::shared_mutex> lock(worker_registry_mutex_);
     
@@ -160,7 +146,6 @@ ErrorCode KeystoneService::get_workers_info(std::vector<WorkerInfo>& workers) co
 }
 
 
-// arnavb remove this if needed
 ErrorCode KeystoneService::get_memory_pools(std::vector<MemoryPool>& memory_pools) const {
     std::shared_lock<std::shared_mutex> lock(memory_pools_mutex_);
     
@@ -492,7 +477,8 @@ ErrorCode KeystoneService::allocate_data_copies(const ObjectKey& key, size_t dat
     
     size_t replication_factor = config.replication_factor;
     size_t max_workers_per_copy = config.max_workers_per_copy;
-    
+    std::cout<< "DEBUG: Replication factor: " << replication_factor <<std::endl;
+    std::cout<< "DEBUG: Max workers per copy: " << max_workers_per_copy <<std::endl;
     std::cout<< "DEBUG: Checking memory pools for allocation. Total pools: " << memory_pools_.size() <<std::endl;
     for (size_t copy_id = 0; copy_id < replication_factor; ++copy_id) {
         std::cout<< "DEBUG: Allocating copy: " << copy_id <<std::endl;
@@ -509,6 +495,7 @@ ErrorCode KeystoneService::allocate_data_copies(const ObjectKey& key, size_t dat
         copy_placement.shards = std::move(shards_for_copy);
         
         copies.push_back(std::move(copy_placement));
+        std::cout<< "DEBUG: Copy: " << copy_placement.copy_index << " " << copy_placement.shards.size() <<std::endl;
     }
     
     return ErrorCode::OK;
@@ -524,6 +511,7 @@ ErrorCode KeystoneService::allocate_shards_for_copy(const ObjectKey& key, size_t
     
     std::vector<MemoryPoolId> available_memory_pools;
     for (const auto& [memory_pool_id, memory_pool] : memory_pools_) {
+        std::cout<< "DEBUG: Memory pool: " << memory_pool_id << " available: " << memory_pool.available() <<std::endl;
         if (memory_pool.available() > 0) {
             available_memory_pools.push_back(memory_pool_id);
         }
@@ -540,11 +528,13 @@ ErrorCode KeystoneService::allocate_shards_for_copy(const ObjectKey& key, size_t
     size_t workers_to_use = std::min(max_workers, available_memory_pools.size());
     size_t shard_size = data_size / workers_to_use;
     size_t remainder = data_size % workers_to_use;
-    
+    std::cout<< "DEBUG: Workers to use: " << workers_to_use <<std::endl;
+    std::cout<< "DEBUG: Shard size: " << shard_size <<std::endl;
+    std::cout<< "DEBUG: Remainder: " << remainder <<std::endl;  
     for (size_t i = 0; i < workers_to_use; ++i) {
         ShardPlacement shard;
         shard.worker_id = available_memory_pools[i];
-        shard.pool_id = "default"; // TODO: implement proper pool selection
+        shard.pool_id = "ram_pool_0"; // TODO: implement proper pool selection
         
         // Use preferred storage class if available, otherwise default to RAM_CPU
         StorageClass storage_class = StorageClass::RAM_CPU;
@@ -558,7 +548,7 @@ ErrorCode KeystoneService::allocate_shards_for_copy(const ObjectKey& key, size_t
         // TODO: Set proper endpoint and location details based on available memory pools
         // For now, set default memory location
         shard.location = MemoryLocation{0, 0, current_shard_size};
-        
+        std::cout << "DEBUG: Shard: " << shard.worker_id << " " << shard.pool_id << " " << shard.length << std::endl;
         shards.push_back(std::move(shard));
     }
     
@@ -740,7 +730,6 @@ void KeystoneService::watch_worker_registry_namespace() {
     if (!etcd_) return;
     auto prefix = workers_prefix();
     auto cb = [this](const std::string& key, const std::string& value, bool is_delete) {
-        // Determine if this is a worker registration or memory pool registration
         auto workers_len = workers_prefix().length();
         if (key.length() <= workers_len) return;
         
@@ -1059,5 +1048,4 @@ void KeystoneService::cleanup_dead_worker(const std::string& worker_id) {
               << " (removed " << memory_pool_ids_to_remove.size() << " storage pools)";
 }
 
-}  // namespace blackbird 
 }  // namespace blackbird 
