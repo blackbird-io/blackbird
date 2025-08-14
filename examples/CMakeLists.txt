@@ -32,6 +32,10 @@ add_executable(ucx_client ../clients/ucx_client.cpp)
 
 target_link_libraries(ucx_client PRIVATE blackbird)
 
-install(TARGETS keystone_example simple_client_test worker_example ucx_client
+add_executable(benchmark_client ../clients/benchmark_client.cpp)
+
+target_link_libraries(benchmark_client PRIVATE blackbird)
+
+install(TARGETS keystone_example simple_client_test worker_example ucx_client benchmark_client
     RUNTIME DESTINATION bin
 ) 
