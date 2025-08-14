@@ -46,14 +46,10 @@ static bool fetch_any_pool_from_etcd(const std::string& endpoints, const std::st
 	if (etcd.connect() != ErrorCode::OK) return false;
 	std::vector<std::string> keys, values;
 	if (etcd.get_with_prefix("/blackbird/clusters/" + cluster_id + "/workers/", keys, values) != ErrorCode::OK) return false;
-	LOG(INFO) << "Found " << keys.size() << " keys in etcd";
 	for (size_t i = 0; i < keys.size(); ++i) {
-		LOG(INFO) << "Key[" << i << "]: " << keys[i];
 		if (keys[i].find("/memory_pools/") == std::string::npos) continue;
-		LOG(INFO) << "Processing memory pool: " << keys[i];
 		try {
 			auto j = nlohmann::json::parse(values[i]);
-			LOG(INFO) << "Parsed JSON: " << j.dump();
 			std::string ep = j.value("ucx_endpoint", std::string{});
 			if (ep.rfind("0.0.0.0:", 0) == 0) {
 				// Replace wildcard with localhost for local test
@@ -61,19 +57,15 @@ static bool fetch_any_pool_from_etcd(const std::string& endpoints, const std::st
 			}
 			uint64_t addr = j.value("ucx_remote_addr", 0ULL);
 			std::string rkey_hex = j.value("ucx_rkey_hex", std::string{});
-			LOG(INFO) << "Extracted: ep=" << ep << ", addr=" << addr << ", rkey_hex=" << rkey_hex;
 			out.ucx_endpoint = ep;
 			out.remote_addr = addr;
 			out.size = j.value("size", 0ULL);
 			out.rkey_raw = hex_to_bytes(rkey_hex);
 			if (!out.ucx_endpoint.empty() && out.remote_addr != 0 && !out.rkey_raw.empty()) {
-				LOG(INFO) << "Successfully found pool!";
 				return true;
 			}
-			LOG(INFO) << "Pool validation failed - ep empty: " << out.ucx_endpoint.empty() 
-					  << ", addr zero: " << (out.remote_addr == 0) << ", rkey empty: " << out.rkey_raw.empty();
 		} catch (const std::exception& e) {
-			LOG(ERROR) << "JSON parse error: " << e.what();
+			LOG(WARNING) << "Failed to parse pool data: " << e.what();
 		}
 	}
 	return false;
