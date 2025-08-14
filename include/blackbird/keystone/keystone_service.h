@@ -284,6 +284,7 @@ private:
                                        std::vector<ShardPlacement>& shards);
     
     void cleanup_stale_workers();
+    void cleanup_dead_worker(const std::string& worker_id);
     void evict_objects_if_needed();
     ViewVersionId increment_view_version();
     

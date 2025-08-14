@@ -213,11 +213,11 @@ ErrorCode EtcdService::put_with_lease(const std::string& key, const std::string&
 }
 
 ErrorCode EtcdService::keep_alive(EtcdLeaseId lease_id) {
-    // Simple approach: just check if lease is still valid
     std::lock_guard<std::mutex> lock(mutex_);
     if (!connected_) return ErrorCode::ETCD_ERROR;
     
     try {
+        // Just check if lease is still valid
         auto ttl_resp = impl_->client->leasetimetolive(lease_id);
         if (!ttl_resp.is_ok()) {
             LOG(WARNING) << "Failed to check TTL for lease " << lease_id 
@@ -231,7 +231,7 @@ ErrorCode EtcdService::keep_alive(EtcdLeaseId lease_id) {
             return ErrorCode::ETCD_ERROR;
         }
 
-        LOG(INFO) << "Lease " << lease_id << " still valid, TTL=" << current_ttl << " seconds";
+        LOG(DEBUG) << "Lease " << lease_id << " still valid, TTL=" << current_ttl << " seconds";
         return ErrorCode::OK;
 
     } catch (const std::exception& e) {

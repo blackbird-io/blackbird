@@ -60,9 +60,10 @@ ErrorCode KeystoneService::start() {
     if (etcd_) {
         load_existing_state_from_etcd();
         
-        // Watch workers and their memory_pools only; heartbeat keys are not used
+        // Watch workers, memory pools, and heartbeats for worker lifecycle management
         setup_watcher_with_error_handling("workers", [this]() { watch_worker_registry_namespace(); });
         setup_watcher_with_error_handling("memory_pools", [this]() { watch_memory_pools_namespace(); });
+        setup_watcher_with_error_handling("heartbeats", [this]() { watch_heartbeat_namespace(); });
         
         // Start lease refresh thread
         etcd_keepalive_thread_ = std::thread(&KeystoneService::run_etcd_keepalive, this);
@@ -780,7 +781,29 @@ void KeystoneService::watch_worker_registry_namespace() {
 }
 
 void KeystoneService::watch_heartbeat_namespace() {
-    // No-op; heartbeats are no longer used. Liveness is governed by etcd lease and key presence.
+    if (!etcd_) return;
+    auto prefix = heartbeat_prefix();
+    auto cb = [this](const std::string& key, const std::string& value, bool is_delete) {
+        if (is_delete) {
+            // Heartbeat key deleted - worker is dead, clean up everything
+            auto pos = key.rfind('/');
+            if (pos == std::string::npos || pos + 1 >= key.size()) return;
+            std::string worker_id = key.substr(pos + 1);
+            
+            LOG(WARNING) << "Worker heartbeat expired, cleaning up dead worker: " << worker_id;
+            cleanup_dead_worker(worker_id);
+        } else {
+            // Heartbeat updated - worker is alive
+            update_worker_heartbeat(key, value);
+        }
+    };
+    
+    auto err = etcd_->watch_prefix(prefix, cb);
+    if (err != ErrorCode::OK) {
+        LOG(ERROR) << "Failed to attach heartbeat watcher on prefix: " << prefix;
+    } else {
+        LOG(INFO) << "Watching heartbeat prefix: " << prefix;
+    }
 }
 
 void KeystoneService::watch_memory_pools_namespace() {
@@ -817,13 +840,21 @@ void KeystoneService::upsert_worker_from_json(const std::string& key, const std:
         info.endpoint = doc.value("endpoint", std::string{});
         info.last_heartbeat = std::chrono::steady_clock::now();
         
+        bool is_new_worker = false;
         {
             std::unique_lock<std::shared_mutex> lock(worker_registry_mutex_);
+            is_new_worker = workers_.find(worker_id) == workers_.end();
             workers_[worker_id] = std::move(info);
         }
         
         increment_view_version();
-        LOG(INFO) << "Registered worker: " << worker_id << " at " << info.endpoint;
+        
+        // Only log registration for genuinely new workers
+        if (is_new_worker) {
+            LOG(INFO) << "Registered worker: " << worker_id << " at " << info.endpoint;
+        } else {
+            LOG(DEBUG) << "Updated worker info: " << worker_id;
+        }
         
     } catch (const std::exception& e) {
         LOG(ERROR) << "Failed to parse worker JSON from etcd (key=" << key << "): " << e.what();
@@ -979,6 +1010,61 @@ void KeystoneService::setup_watcher_with_error_handling(const std::string& watch
     } catch (const std::exception& e) {
         LOG(ERROR) << "Failed to set up " << watcher_name << " watcher: " << e.what();
     }
+}
+
+void KeystoneService::cleanup_dead_worker(const std::string& worker_id) {
+    LOG(INFO) << "Cleaning up dead worker: " << worker_id;
+    
+    // Remove from local tracking first
+    std::vector<std::string> memory_pool_ids_to_remove;
+    {
+        std::unique_lock<std::shared_mutex> worker_lock(worker_registry_mutex_);
+        auto worker_it = workers_.find(worker_id);
+        if (worker_it != workers_.end()) {
+            // Collect memory pool IDs before removing worker
+            for (const auto& [memory_pool_id, memory_pool] : worker_it->second.memory_pools) {
+                memory_pool_ids_to_remove.push_back(memory_pool_id);
+            }
+            workers_.erase(worker_it);
+        }
+    }
+    
+    // Remove worker's memory pools from global tracking
+    {
+        std::unique_lock<std::shared_mutex> pool_lock(memory_pools_mutex_);
+        for (const auto& memory_pool_id : memory_pool_ids_to_remove) {
+            memory_pools_.erase(memory_pool_id);
+        }
+    }
+    
+    // Remove heartbeat tracking
+    {
+        std::unique_lock<std::shared_mutex> heartbeat_lock(heartbeat_mutex_);
+        worker_heartbeats_.erase(worker_id);
+    }
+    
+    // Clean up persistent etcd keys (worker info and storage pools)
+    if (etcd_) {
+        // Delete persistent worker info key
+        std::string worker_key = make_worker_key(worker_id);
+        auto err = etcd_->del(worker_key);
+        if (err != ErrorCode::OK) {
+            LOG(WARNING) << "Failed to delete worker key from etcd: " << worker_key;
+        }
+        
+        // Delete persistent storage pool keys
+        for (const auto& memory_pool_id : memory_pool_ids_to_remove) {
+            std::string pool_key = make_worker_memory_pool_key(worker_id, memory_pool_id);
+            err = etcd_->del(pool_key);
+            if (err != ErrorCode::OK) {
+                LOG(WARNING) << "Failed to delete storage pool key from etcd: " << pool_key;
+            }
+        }
+    }
+    
+    increment_view_version();
+    LOG(INFO) << "Successfully cleaned up dead worker: " << worker_id 
+              << " (removed " << memory_pool_ids_to_remove.size() << " storage pools)";
 }
 
 }  // namespace blackbird 
