@@ -126,7 +126,6 @@ private:
 	// State management
 	std::atomic<bool> running_{false};
 	std::unique_ptr<EtcdService> etcd_;
-	EtcdLeaseId worker_lease_id_{0};
 	
 	// Storage backends
 	std::unordered_map<std::string, std::unique_ptr<StorageBackend>> storage_pools_;

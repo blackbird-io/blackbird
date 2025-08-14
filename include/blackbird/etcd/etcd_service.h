@@ -76,6 +76,15 @@ public:
     ErrorCode put(const std::string& key, const std::string& value);
     
     /**
+     * @brief Put a key-value pair with TTL
+     * @param key The key to store
+     * @param value The value to store
+     * @param ttl_seconds TTL in seconds (etcd will handle lease creation internally)
+     * @return ErrorCode::OK on success
+     */
+    ErrorCode put_with_ttl(const std::string& key, const std::string& value, int64_t ttl_seconds);
+    
+    /**
      * @brief Delete a key
      * @param key The key to delete
      * @return ErrorCode::OK on success

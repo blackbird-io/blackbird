@@ -127,6 +127,35 @@ ErrorCode EtcdService::put(const std::string& key, const std::string& value) {
     }
 }
 
+ErrorCode EtcdService::put_with_ttl(const std::string& key, const std::string& value, int64_t ttl_seconds) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!connected_) return ErrorCode::ETCD_ERROR;
+    try {
+        // Create a temporary lease for this TTL
+        auto lease_response = impl_->client->leasegrant(ttl_seconds);
+        if (!lease_response.is_ok()) {
+            LOG(ERROR) << "Failed to create lease for TTL " << ttl_seconds << ": " << lease_response.error_message();
+            return ErrorCode::ETCD_ERROR;
+        }
+        
+        EtcdLeaseId lease_id = lease_response.value().lease();
+        
+        // Put the key with the lease
+        auto put_response = impl_->client->put(key, value, lease_id);
+        if (!put_response.is_ok()) {
+            LOG(ERROR) << "Failed to put key '" << key << "' with TTL " << ttl_seconds << ": " << put_response.error_message();
+            return ErrorCode::ETCD_ERROR;
+        }
+        
+        // No need to track lease_id - etcd will automatically clean up when TTL expires
+        return ErrorCode::OK;
+        
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Exception while putting key '" << key << "' with TTL: " << e.what();
+        return ErrorCode::ETCD_ERROR;
+    }
+}
+
 ErrorCode EtcdService::del(const std::string& key) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!connected_) return ErrorCode::ETCD_ERROR;
@@ -217,21 +246,27 @@ ErrorCode EtcdService::keep_alive(EtcdLeaseId lease_id) {
     if (!connected_) return ErrorCode::ETCD_ERROR;
     
     try {
-        // Just check if lease is still valid
+        // Send keepalive request to renew the lease
+        auto keepalive_resp = impl_->client->leasekeepalive(lease_id);
+        if (!keepalive_resp) {
+            LOG(WARNING) << "Failed to send keepalive for lease " << lease_id;
+            return ErrorCode::ETCD_ERROR;
+        }
+
+        // Verify lease was renewed by checking TTL
         auto ttl_resp = impl_->client->leasetimetolive(lease_id);
         if (!ttl_resp.is_ok()) {
-            LOG(WARNING) << "Failed to check TTL for lease " << lease_id 
-                        << ": " << ttl_resp.error_message();
+            LOG(WARNING) << "Failed to check TTL after keepalive for lease " << lease_id;
             return ErrorCode::ETCD_ERROR;
         }
 
         auto current_ttl = ttl_resp.value().ttl();
         if (current_ttl <= 0) {
-            LOG(WARNING) << "Lease " << lease_id << " expired (TTL=" << current_ttl << ")";
+            LOG(WARNING) << "Lease " << lease_id << " still expired after keepalive (TTL=" << current_ttl << ")";
             return ErrorCode::ETCD_ERROR;
         }
 
-        LOG(DEBUG) << "Lease " << lease_id << " still valid, TTL=" << current_ttl << " seconds";
+        VLOG(2) << "Lease " << lease_id << " renewed successfully, TTL=" << current_ttl << " seconds";
         return ErrorCode::OK;
 
     } catch (const std::exception& e) {

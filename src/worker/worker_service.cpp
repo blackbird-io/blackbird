@@ -131,10 +131,7 @@ WorkerService::~WorkerService() {
 			}
 		}
 		
-		// Revoke heartbeat lease (this will remove heartbeat key)
-		if (worker_lease_id_ != 0) {
-			etcd_->revoke_lease(worker_lease_id_);
-		}
+		// Heartbeat will automatically expire due to TTL
 	}
 }
 
@@ -287,11 +284,7 @@ void WorkerService::stop() {
 			}
 		}
 		
-		// Revoke heartbeat lease (this will remove heartbeat key)
-		if (worker_lease_id_ != 0) {
-			etcd_->revoke_lease(worker_lease_id_);
-			worker_lease_id_ = 0;
-		}
+		// Heartbeat will automatically expire due to TTL
 	}
 	
 	LOG(INFO) << "WorkerService stopped";
@@ -410,14 +403,7 @@ ErrorCode WorkerService::register_worker() {
 		return err;
 	}
 	
-	// Grant a lease only for heartbeat
-	err = etcd_->grant_lease(30, worker_lease_id_);
-	if (err != ErrorCode::OK) {
-		LOG(ERROR) << "Failed to grant lease for heartbeat: " << error::to_string(err);
-		return err;
-	}
-	
-	LOG(INFO) << "Registered worker " << config_.worker_id << " (lease " << worker_lease_id_ << " for heartbeat only)";
+	LOG(INFO) << "Registered worker " << config_.worker_id;
 	return ErrorCode::OK;
 }
 
@@ -442,35 +428,23 @@ ErrorCode WorkerService::register_storage_pools() {
 }
 
 void WorkerService::run_heartbeat_loop() {
-    LOG(INFO) << "Starting heartbeat loop";
+    LOG(INFO) << "Starting heartbeat loop (5s interval, 10s TTL)";
     
     while (running_.load()) {
-        std::this_thread::sleep_for(std::chrono::seconds(config_.heartbeat_interval_sec));
+        std::this_thread::sleep_for(std::chrono::seconds(5));  // 5 second interval
         if (!running_.load()) break;
         
         try {
-            // Renew the lease for heartbeat
-            auto err = etcd_->keep_alive(worker_lease_id_);
-            if (err != ErrorCode::OK) {
-                LOG(WARNING) << "Failed to renew heartbeat lease: " << error::to_string(err);
-                // Try to re-grant lease and re-register heartbeat
-                err = etcd_->grant_lease(30, worker_lease_id_);
-                if (err != ErrorCode::OK) {
-                    LOG(WARNING) << "Failed to re-grant heartbeat lease: " << error::to_string(err);
-                    continue;
-                }
-            }
-            
-            // Update heartbeat key with lease
+            // Set heartbeat key with 10-second TTL (no explicit lease management)
             std::string hb_key = heartbeat_key();
             std::string timestamp = std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
-            err = etcd_->put_with_lease(hb_key, timestamp, worker_lease_id_);
+            auto err = etcd_->put_with_ttl(hb_key, timestamp, 10);  // 10 second TTL
             if (err != ErrorCode::OK) {
-                LOG(WARNING) << "Failed to update heartbeat: " << error::to_string(err);
+                LOG(WARNING) << "Failed to set heartbeat with TTL: " << error::to_string(err);
                 continue;
             }
             
-            LOG(DEBUG) << "Heartbeat sent successfully with lease " << worker_lease_id_;
+            VLOG(2) << "Heartbeat sent successfully with 10s TTL";
             
         } catch (const std::exception& e) {
             LOG(ERROR) << "Exception in heartbeat loop: " << e.what();

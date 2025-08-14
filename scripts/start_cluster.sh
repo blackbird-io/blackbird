@@ -204,23 +204,26 @@ print_status "  Worker:   tail -f /tmp/blackbird-worker.log"
 echo
 print_status "Press Ctrl+C to stop all services"
 
-while true; do
-    for i in "${!PIDS[@]}"; do
-        pid=${PIDS[$i]}
-        if ! kill -0 $pid 2>/dev/null; then
-            print_error "Process $pid died unexpectedly"
-            print_status "Checking remaining processes..."
-            for j in "${!PIDS[@]}"; do
-                other_pid=${PIDS[$j]}
-                if kill -0 $other_pid 2>/dev/null; then
-                    print_status "Process $other_pid is still running"
-                else
-                    print_status "Process $other_pid is also dead"
-                fi
-            done
-            exit 1
-        fi
-    done
-    
-    sleep 5
-done 
+# while true; do
+#     for i in "${!PIDS[@]}"; do
+#         pid=${PIDS[$i]}
+#         if ! kill -0 $pid 2>/dev/null; then
+#             print_error "Process $pid died unexpectedly"
+#             print_status "Checking remaining processes..."
+#             for j in "${!PIDS[@]}"; do
+#                 other_pid=${PIDS[$j]}
+#                 if kill -0 $other_pid 2>/dev/null; then
+#                     print_status "Process $other_pid is still running"
+#                 else
+#                     print_status "Process $other_pid is also dead"
+#                 fi
+#             done
+#             exit 1
+#         fi
+#     done
+#     
+#     sleep 5
+# done
+
+# Keep script running without monitoring
+sleep 3600 

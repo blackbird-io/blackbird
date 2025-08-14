@@ -65,7 +65,7 @@ ErrorCode KeystoneService::start() {
         setup_watcher_with_error_handling("memory_pools", [this]() { watch_memory_pools_namespace(); });
         setup_watcher_with_error_handling("heartbeats", [this]() { watch_heartbeat_namespace(); });
         
-        // Start lease refresh thread
+        // Start TTL refresh thread
         etcd_keepalive_thread_ = std::thread(&KeystoneService::run_etcd_keepalive, this);
     }
     
@@ -90,11 +90,7 @@ void KeystoneService::stop() {
 		etcd_keepalive_thread_.join();
 	}
 	
-	// Revoke keystone lease (this will automatically remove service registration)
-	if (etcd_ && keystone_lease_id_ != 0) {
-		etcd_->revoke_lease(keystone_lease_id_);
-		keystone_lease_id_ = 0;
-	}
+	// Service registration will automatically expire due to TTL
 	
 	LOG(INFO) << "Keystone service stopped";
 }
@@ -398,23 +394,18 @@ ErrorCode KeystoneService::setup_etcd_integration() {
         return err;
     }
     
-    // Grant a lease for keystone registration
-    err = etcd_->grant_lease(30, keystone_lease_id_);
-    if (err != ErrorCode::OK) {
-        LOG(ERROR) << "Failed to grant keystone lease: " << error::to_string(err);
-        return err;
-    }
+    // Create consistent service ID for this instance
+    service_id_ = "keystone-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     
-    // Register keystone service with etcd using lease
-    std::string service_id = "keystone-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
-    std::string key = "/blackbird/services/blackbird-keystone/" + service_id;
-    err = etcd_->put_with_lease(key, config_.listen_address, keystone_lease_id_);
+    // Register keystone service with etcd using TTL (no explicit lease management)
+    std::string key = "/blackbird/services/blackbird-keystone/" + service_id_;
+    err = etcd_->put_with_ttl(key, config_.listen_address, 60);  // 60 second TTL
     if (err != ErrorCode::OK) {
         LOG(ERROR) << "Failed to register keystone service with etcd: " << error::to_string(err);
         return err;
     }
     
-    LOG(INFO) << "Registered keystone service with etcd (lease " << keystone_lease_id_ << ")";
+    LOG(INFO) << "Registered keystone service with etcd using TTL (service_id: " << service_id_ << ")";
     return ErrorCode::OK;
 }
 
@@ -469,28 +460,26 @@ void KeystoneService::run_health_checks() {
 }
 
 void KeystoneService::run_etcd_keepalive() {
-    LOG(INFO) << "Starting etcd lease refresh thread";
+    LOG(INFO) << "Starting etcd TTL refresh thread";
     
     while (running_.load()) {
         std::this_thread::sleep_for(std::chrono::seconds(config_.client_ttl_sec / 2));  // Refresh at 1/2 of TTL
         
         if (!running_.load()) break;
         
-        if (etcd_ && keystone_lease_id_ != 0) {
-            // Refresh the lease by granting a new one
-            EtcdLeaseId new_lease_id;
-            auto err = etcd_->refresh_lease(30, new_lease_id);
+        if (etcd_ && !service_id_.empty()) {
+            // Refresh service registration with TTL (no explicit lease management)
+            std::string key = "/blackbird/services/blackbird-keystone/" + service_id_;
+            auto err = etcd_->put_with_ttl(key, config_.listen_address, 60);  // 60 second TTL
             if (err != ErrorCode::OK) {
-                LOG(WARNING) << "Failed to refresh keystone lease " << keystone_lease_id_ 
-                            << ": " << error::to_string(err);
+                LOG(WARNING) << "Failed to refresh keystone service registration: " << error::to_string(err);
             } else {
-                keystone_lease_id_ = new_lease_id;
-                VLOG(2) << "Refreshed keystone lease to " << keystone_lease_id_;
+                VLOG(2) << "Refreshed keystone service registration with 60s TTL";
             }
         }
     }
     
-    LOG(INFO) << "Etcd lease refresh thread stopped";
+    LOG(INFO) << "Etcd TTL refresh thread stopped";
 }
 
 ErrorCode KeystoneService::allocate_data_copies(const ObjectKey& key, size_t data_size,
@@ -574,7 +563,7 @@ ErrorCode KeystoneService::allocate_shards_for_copy(const ObjectKey& key, size_t
 }
 
 void KeystoneService::cleanup_stale_workers() {
-    // No stale-removal based on heartbeats. Workers are removed when their keys disappear (lease expiry),
+    // No stale-removal based on heartbeats. Workers are removed when their keys disappear (TTL expiry),
     // handled by watch_worker_registry_namespace.
 }
 
@@ -853,7 +842,7 @@ void KeystoneService::upsert_worker_from_json(const std::string& key, const std:
         if (is_new_worker) {
             LOG(INFO) << "Registered worker: " << worker_id << " at " << info.endpoint;
         } else {
-            LOG(DEBUG) << "Updated worker info: " << worker_id;
+            VLOG(2) << "Updated worker info: " << worker_id;
         }
         
     } catch (const std::exception& e) {
@@ -988,7 +977,7 @@ void KeystoneService::load_existing_state_from_etcd() {
         LOG(WARNING) << "Failed to load workers from etcd: " << error::to_string(err);
     }
 
-    // Do not load heartbeat keys anymore; liveness is via leases
+    // Do not load heartbeat keys anymore; liveness is via TTL
     
     // Load memory pools
     std::vector<std::string> memory_pool_keys, memory_pool_values;
