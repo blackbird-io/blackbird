@@ -26,14 +26,14 @@ struct WorkerServiceConfig {
 	std::string rpc_endpoint{"0.0.0.0:0"};     // Control RPC endpoint (auto-assign port if 0)
 	std::string ucx_endpoint;                   // UCX endpoint for RDMA (host:port for sockaddr mode)
 	std::vector<std::string> interconnects{"tcp"}; // ["tcp", "infiniband", "nvlink"]
-	
+
 	std::vector<StorageClass> storage_classes{StorageClass::RAM_CPU};
 	double max_bw_gbps{10.0};
 	int numa_node{0};
 	std::string version{"1.0.0"};
-	
-	int64_t lease_ttl_sec{30};                  // Lease TTL for etcd registration
-	int64_t heartbeat_interval_sec{10};         // Heartbeat interval
+
+	int64_t lease_ttl_sec{10};                  // Lease TTL for etcd registration - aligned with keystone service
+	int64_t heartbeat_interval_sec{5};          // Heartbeat interval - TTL/2 for lease maintenance
 	int64_t allocation_poll_interval_ms{100};   // How often to check for new allocations
 	
 	// Storage pools to create at startup

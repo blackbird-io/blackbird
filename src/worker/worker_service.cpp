@@ -116,7 +116,7 @@ WorkerService::~WorkerService() {
 		stop();
 	}
 	
-	// Cleanup etcd resources
+	// Cleanup etcd lease (this will automatically remove all keys)
 	if (etcd_ && worker_lease_id_ != 0) {
 		etcd_->revoke_lease(worker_lease_id_);
 	}
@@ -256,7 +256,7 @@ void WorkerService::stop() {
 		}
 	}
 	
-	// Revoke etcd lease (this will automatically remove our keys)
+	// Revoke etcd lease (this will automatically remove all worker keys)
 	if (etcd_ && worker_lease_id_ != 0) {
 		etcd_->revoke_lease(worker_lease_id_);
 		worker_lease_id_ = 0;
@@ -368,14 +368,16 @@ ErrorCode WorkerService::setup_etcd_connection() {
 }
 
 ErrorCode WorkerService::register_worker() {
-	// Grant lease for worker registration
-	auto err = etcd_->grant_lease(config_.lease_ttl_sec, worker_lease_id_);
+	// Grant a lease with 30-second TTL for auto-cleanup
+	auto err = etcd_->grant_lease(30, worker_lease_id_);
 	if (err != ErrorCode::OK) {
 		LOG(ERROR) << "Failed to grant lease: " << error::to_string(err);
 		return err;
 	}
 	
-	// Register worker with lease
+	LOG(INFO) << "Granted etcd lease " << worker_lease_id_ << " with 30-second TTL";
+	
+	// Register worker info with lease
 	std::string worker_key = workers_key();
 	std::string worker_info = worker_info_to_json().dump();
 	
@@ -385,15 +387,7 @@ ErrorCode WorkerService::register_worker() {
 		return err;
 	}
 	
-	// Start keepalive for the lease
-	err = etcd_->keep_alive(worker_lease_id_);
-	if (err != ErrorCode::OK) {
-		LOG(ERROR) << "Failed to start lease keepalive: " << error::to_string(err);
-		return err;
-	}
-	
-	LOG(INFO) << "Registered worker " << config_.worker_id 
-	          << " with lease " << worker_lease_id_;
+	LOG(INFO) << "Registered worker " << config_.worker_id << " with lease " << worker_lease_id_;
 	return ErrorCode::OK;
 }
 
@@ -418,42 +412,72 @@ ErrorCode WorkerService::register_storage_pools() {
 }
 
 void WorkerService::run_heartbeat_loop() {
-	LOG(INFO) << "Starting heartbeat loop";
-	
-	while (running_.load()) {
-		std::this_thread::sleep_for(std::chrono::seconds(config_.heartbeat_interval_sec));
-		
-		if (!running_.load()) break;
-		
-		try {
-			// Update heartbeat
-			std::string hb_key = heartbeat_key();
-			std::string hb_value = std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
-			
-			auto err = etcd_->put_with_lease(hb_key, hb_value, worker_lease_id_);
-			if (err != ErrorCode::OK) {
-				LOG(WARNING) << "Failed to update heartbeat: " << error::to_string(err);
-			}
-			
-			// Update storage pool usage
-			std::shared_lock<std::shared_mutex> lock(storage_pools_mutex_);
-			for (const auto& [pool_id, backend] : storage_pools_) {
-				std::string pool_key = worker_pool_key(pool_id);
-				std::string pool_info = pool_to_json(pool_id, *backend).dump();
-				
-				err = etcd_->put_with_lease(pool_key, pool_info, worker_lease_id_);
-				if (err != ErrorCode::OK) {
-					LOG(WARNING) << "Failed to update storage pool " << pool_id 
-					            << ": " << error::to_string(err);
-				}
-			}
-			
-		} catch (const std::exception& e) {
-			LOG(ERROR) << "Exception in heartbeat loop: " << e.what();
-		}
-	}
-	
-	LOG(INFO) << "Heartbeat loop stopped";
+    LOG(INFO) << "Starting heartbeat loop";
+    
+    while (running_.load()) {
+        std::this_thread::sleep_for(std::chrono::seconds(config_.heartbeat_interval_sec));
+        
+        if (!running_.load()) break;
+        
+        try {
+            // Refresh the lease by granting a new one
+            EtcdLeaseId new_lease_id;
+            auto err = etcd_->refresh_lease(30, new_lease_id);
+            if (err != ErrorCode::OK) {
+                LOG(WARNING) << "Failed to refresh lease: " << error::to_string(err);
+                // Try to re-register completely
+                auto reg_err = register_worker();
+                if (reg_err == ErrorCode::OK) {
+                    reg_err = register_storage_pools();
+                }
+                if (reg_err != ErrorCode::OK) {
+                    LOG(WARNING) << "Re-registration failed: " << error::to_string(reg_err);
+                }
+                continue;
+            }
+            
+            // Update to the new lease ID
+            worker_lease_id_ = new_lease_id;
+            
+            // Re-register worker info with new lease
+            std::string worker_key = workers_key();
+            std::string worker_info = worker_info_to_json().dump();
+            err = etcd_->put_with_lease(worker_key, worker_info, worker_lease_id_);
+            if (err != ErrorCode::OK) {
+                LOG(WARNING) << "Failed to re-register worker info: " << error::to_string(err);
+                continue;
+            }
+            
+            // Re-register all storage pools with new lease
+            {
+                std::shared_lock<std::shared_mutex> lock(storage_pools_mutex_);
+                for (const auto& [pool_id, backend] : storage_pools_) {
+                    std::string pool_key = worker_pool_key(pool_id);
+                    std::string pool_info = pool_to_json(pool_id, *backend).dump();
+                    err = etcd_->put_with_lease(pool_key, pool_info, worker_lease_id_);
+                    if (err != ErrorCode::OK) {
+                        LOG(WARNING) << "Failed to re-register storage pool " << pool_id 
+                                    << ": " << error::to_string(err);
+                    }
+                }
+            }
+            
+            // Update heartbeat timestamp with the new lease
+            std::string hb_key = heartbeat_key();
+            std::string timestamp = std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+            err = etcd_->put_with_lease(hb_key, timestamp, worker_lease_id_);
+            if (err != ErrorCode::OK) {
+                LOG(WARNING) << "Failed to update heartbeat: " << error::to_string(err);
+            } else {
+                VLOG(2) << "Refreshed lease " << worker_lease_id_ << " and updated all keys";
+            }
+            
+        } catch (const std::exception& e) {
+            LOG(ERROR) << "Exception in heartbeat loop: " << e.what();
+        }
+    }
+    
+    LOG(INFO) << "Heartbeat loop stopped";
 }
 
 // Etcd key helpers

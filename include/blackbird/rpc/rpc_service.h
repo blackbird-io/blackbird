@@ -155,8 +155,6 @@ public:
      */
     std::vector<ErrorCode> batch_put_cancel(const std::vector<ObjectKey>& keys);
     
-    // === Admin/Monitoring Methods ===
-    
     /**
      * @brief Get cluster statistics
      */
@@ -197,13 +195,8 @@ private:
     
     ErrorCode handle_service_call(std::function<ErrorCode()> service_call);
 
-    // === YLT RPC Endpoints (Direct KeystoneService Pass-through) ===
-    // These are the actual network endpoints registered with YLT.
-    // They directly match KeystoneService API with no conversions needed.
-    
-    /**
-     * @brief Check if object exists | Direct: object_exists(ObjectKey) -> Result<bool>
-     */
+public:
+    // Expose RPC handlers as public so clients can reference them
     ObjectExistsResponse rpc_object_exists(ObjectExistsRequest request);
     
     /**
@@ -271,7 +264,6 @@ private:
      */
     BatchPutCancelResponse rpc_batch_put_cancel(BatchPutCancelRequest request);
     
-    // No helper methods needed - direct pass-through to KeystoneService
 };
 
 /**

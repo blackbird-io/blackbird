@@ -9,7 +9,7 @@ worker:
   etcd_endpoints:
     - "localhost:2379"
   rpc_endpoint: "0.0.0.0:0"  # Auto-assign port
-  ucx_endpoint: ""
+  ucx_endpoint: "127.0.0.1:0"  # Use localhost instead of wildcard for UCX
   interconnects:
     - "tcp"
     # - "rdma"
@@ -21,8 +21,8 @@ worker:
   version: "1.0.0"
   
   # Operational
-  lease_ttl_sec: 30
-  heartbeat_interval_sec: 10
+  lease_ttl_sec: 60         
+  heartbeat_interval_sec: 5 
 
 # Storage Pools Configuration
 storage_pools:
@@ -31,7 +31,7 @@ storage_pools:
     storage_class: "RAM_CPU"
     size_bytes: 2147483648  # 2GB
     
-  # Example: Add more pools as needed
+  # Add more pools as needed
   # - pool_id: "nvme_pool_0" 
   #   storage_class: "NVME"
   #   size_bytes: 107374182400  # 100GB
