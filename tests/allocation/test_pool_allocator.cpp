@@ -20,6 +20,10 @@ MemoryPool make_pool(const std::string& id, size_t size, size_t used = 0) {
     pool.size = size;
     pool.used = used;
     pool.storage_class = StorageClass::RAM_CPU;
+    // UCX sockaddr fields needed by PoolAllocator
+    pool.ucx_endpoint = "127.0.0.1:12345";
+    pool.ucx_remote_addr = 0x10000000ULL;
+    pool.ucx_rkey_hex = "DEADBEEF";
     return pool;
 }
 
@@ -102,6 +106,70 @@ TEST(PoolAllocatorFit, FirstFitChoosesLowestOffset) {
     auto r = alloc.allocate(250, /*prefer_best_fit=*/false);
     ASSERT_TRUE(r);
     EXPECT_EQ(r->offset, 300u);
+}
+
+TEST(PoolAllocatorFreeMerge, MergeWithPrevAndNextNeighborsOnly) {
+    auto pool = make_pool("pool-A", 1000);
+    PoolAllocator alloc{pool};
+
+    // Allocate three blocks: A[0..100), B[100..300), C[300..600)
+    auto a = alloc.allocate(100); ASSERT_TRUE(a);
+    auto b = alloc.allocate(200); ASSERT_TRUE(b);
+    auto c = alloc.allocate(300); ASSERT_TRUE(c);
+
+    // Free A and C so free list has [0..100) and [600..1000)
+    alloc.free(*a);
+    alloc.free(*c);
+    EXPECT_EQ(alloc.total_free(), 700u);
+    EXPECT_EQ(alloc.largest_free_block(), 400u);
+
+    // Now free B; should merge with prev [0..100) and next [600..1000) to form [0..1000)
+    alloc.free(*b);
+    EXPECT_EQ(alloc.total_free(), 1000u);
+    EXPECT_EQ(alloc.largest_free_block(), 1000u);
+}
+
+TEST(PoolAllocatorFreeMerge, MergeWithOnlyPrevOrOnlyNext) {
+    auto pool = make_pool("pool-A", 1000);
+    PoolAllocator alloc{pool};
+
+    auto a = alloc.allocate(100); ASSERT_TRUE(a);   // [0..100)
+    auto b = alloc.allocate(200); ASSERT_TRUE(b);   // [100..300)
+    auto c = alloc.allocate(100); ASSERT_TRUE(c);   // [300..400)
+
+    // Free B first -> free [100..300)
+    alloc.free(*b);
+
+    // Free C next -> adjacent to next, merges to [100..400)
+    alloc.free(*c);
+    EXPECT_EQ(alloc.total_free(), 300u + 600u); // [100..400) + [400..1000)
+    EXPECT_EQ(alloc.largest_free_block(), 600u);
+
+    // Free A -> merges with prev to produce [0..400)
+    alloc.free(*a);
+    EXPECT_EQ(alloc.total_free(), 1000u);
+    EXPECT_EQ(alloc.largest_free_block(), 1000u);
+}
+
+TEST(PoolAllocatorFreeMerge, NoMergeWhenNonAdjacent) {
+    auto pool = make_pool("pool-A", 1000);
+    PoolAllocator alloc{pool};
+
+    auto a = alloc.allocate(100); ASSERT_TRUE(a);   // [0..100)
+    auto b = alloc.allocate(100); ASSERT_TRUE(b);   // [100..200)
+    auto c = alloc.allocate(100); ASSERT_TRUE(c);   // [200..300)
+
+    // Create a gap by allocating and not freeing [300..400)
+    auto d = alloc.allocate(100); ASSERT_TRUE(d);   // [300..400)
+    auto e = alloc.allocate(100); ASSERT_TRUE(e);   // [400..500)
+
+    // Free A and C only. These are non-adjacent free blocks [0..100) and [200..300)
+    alloc.free(*a);
+    alloc.free(*c);
+
+    // Free B merges between A and C into [0..300)
+    alloc.free(*b);
+    EXPECT_EQ(alloc.largest_free_block(), 300u);
 }
 
 TEST(PoolAllocatorStats, FragmentationComputesCorrectly) {

@@ -66,11 +66,26 @@ std::optional<Range> PoolAllocator::allocate(uint64_t size, bool prefer_best_fit
 void PoolAllocator::free(const Range& range) {
     std::lock_guard<std::mutex> lock(mutex_);
     
-    // Add the range back to free list
-    free_ranges_[range.offset] = range.length;
+    // Merge locally with immediate neighbors (O(log N))
+    uint64_t new_offset = range.offset;
+    uint64_t new_length = range.length;
     
-    // Merge with adjacent ranges
-    merge_adjacent_ranges();
+    auto next_it = free_ranges_.lower_bound(new_offset);
+    if (next_it != free_ranges_.begin()) {
+        auto prev_it = std::prev(next_it);
+        if (prev_it->first + prev_it->second == new_offset) {
+            new_offset = prev_it->first;
+            new_length += prev_it->second;
+            free_ranges_.erase(prev_it);
+        }
+    }
+    next_it = free_ranges_.lower_bound(new_offset);
+    if (next_it != free_ranges_.end() && new_offset + new_length == next_it->first) {
+        new_length += next_it->second;
+        free_ranges_.erase(next_it);
+    }
+    
+    free_ranges_[new_offset] = new_length;
     
     VLOG(2) << "Freed range [" << range.offset << ", " << range.end() 
             << ") in pool " << pool_id_;
@@ -116,25 +131,20 @@ MemoryLocation PoolAllocator::to_memory_location(const Range& range) const {
 }
 
 void PoolAllocator::merge_adjacent_ranges() {
+    // Fallback full merge (currently unused by free()).
     if (free_ranges_.size() <= 1) return;
     
     auto it = free_ranges_.begin();
     while (it != free_ranges_.end()) {
         auto next_it = std::next(it);
-        if (next_it != free_ranges_.end()) {
-            // Check if current range is adjacent to next range
-            if (it->first + it->second == next_it->first) {
-                // Merge: extend current range and remove next
-                uint64_t merged_length = it->second + next_it->second;
-                uint64_t offset = it->first;
-                
-                free_ranges_.erase(next_it);
-                it->second = merged_length;
-                
-                VLOG(3) << "Merged adjacent ranges at offset " << offset 
-                        << " new length=" << merged_length;
-                continue;  // Don't increment it, check for more merges
-            }
+        if (next_it != free_ranges_.end() && it->first + it->second == next_it->first) {
+            uint64_t merged_length = it->second + next_it->second;
+            uint64_t offset = it->first;
+            free_ranges_.erase(next_it);
+            it->second = merged_length;
+            VLOG(3) << "Merged adjacent ranges at offset " << offset 
+                    << " new length=" << merged_length;
+            continue;
         }
         ++it;
     }
