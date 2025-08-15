@@ -873,7 +873,6 @@ TEST(RangeAllocatorStriping, MaxReplicationFactorStress) {
     EXPECT_EQ(alloc_result.copies.size(), 20u) << "Should have 20 replicas";
     EXPECT_EQ(alloc_result.total_shards_created, 40u) << "Should have 40 total shards (20*2)";
     
-    // Verify all copies are correctly structured
     std::set<std::string> all_used_pools;
     for (size_t i = 0; i < alloc_result.copies.size(); ++i) {
         const auto& copy = alloc_result.copies[i];

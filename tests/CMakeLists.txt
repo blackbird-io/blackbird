@@ -15,6 +15,7 @@ enable_testing()
 
 file(GLOB_RECURSE TEST_SOURCES
   allocation/*.cpp
+  storage/*.cpp
 )
 
 add_executable(blackbird_tests ${TEST_SOURCES})

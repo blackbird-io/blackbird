@@ -17,11 +17,8 @@
 //Build example programs
 BUILD_EXAMPLES:BOOL=ON
 
-//Builds the googlemock subproject
-BUILD_GMOCK:BOOL=ON
-
 //Build tests
-BUILD_TESTS:BOOL=ON
+BUILD_TESTS:BOOL=OFF
 
 Boost_ATOMIC_LIBRARY_RELEASE:STRING=/usr/lib/x86_64-linux-gnu/libboost_atomic.so.1.74.0
 
@@ -84,32 +81,6 @@ CMAKE_CXX_FLAGS_RELEASE:STRING=-O3 -DNDEBUG
 //Flags used by the CXX compiler during RELWITHDEBINFO builds.
 CMAKE_CXX_FLAGS_RELWITHDEBINFO:STRING=-O2 -g -DNDEBUG
 
-//C compiler
-CMAKE_C_COMPILER:FILEPATH=/usr/bin/cc
-
-//A wrapper around 'ar' adding the appropriate '--plugin' option
-// for the GCC compiler
-CMAKE_C_COMPILER_AR:FILEPATH=/usr/bin/gcc-ar-11
-
-//A wrapper around 'ranlib' adding the appropriate '--plugin' option
-// for the GCC compiler
-CMAKE_C_COMPILER_RANLIB:FILEPATH=/usr/bin/gcc-ranlib-11
-
-//Flags used by the C compiler during all build types.
-CMAKE_C_FLAGS:STRING=
-
-//Flags used by the C compiler during DEBUG builds.
-CMAKE_C_FLAGS_DEBUG:STRING=-g
-
-//Flags used by the C compiler during MINSIZEREL builds.
-CMAKE_C_FLAGS_MINSIZEREL:STRING=-Os -DNDEBUG
-
-//Flags used by the C compiler during RELEASE builds.
-CMAKE_C_FLAGS_RELEASE:STRING=-O3 -DNDEBUG
-
-//Flags used by the C compiler during RELWITHDEBINFO builds.
-CMAKE_C_FLAGS_RELWITHDEBINFO:STRING=-O2 -g -DNDEBUG
-
 //Path to a program.
 CMAKE_DLLTOOL:FILEPATH=CMAKE_DLLTOOL-NOTFOUND
 
@@ -131,56 +102,8 @@ CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO:STRING=
 //Enable/Disable output of compile commands during generation.
 CMAKE_EXPORT_COMPILE_COMMANDS:BOOL=
 
-//User executables (bin)
-CMAKE_INSTALL_BINDIR:PATH=bin
-
-//Read-only architecture-independent data (DATAROOTDIR)
-CMAKE_INSTALL_DATADIR:PATH=
-
-//Read-only architecture-independent data root (share)
-CMAKE_INSTALL_DATAROOTDIR:PATH=share
-
-//Documentation root (DATAROOTDIR/doc/PROJECT_NAME)
-CMAKE_INSTALL_DOCDIR:PATH=
-
-//C header files (include)
-CMAKE_INSTALL_INCLUDEDIR:PATH=include
-
-//Info documentation (DATAROOTDIR/info)
-CMAKE_INSTALL_INFODIR:PATH=
-
-//Object code libraries (lib)
-CMAKE_INSTALL_LIBDIR:PATH=lib
-
-//Program executables (libexec)
-CMAKE_INSTALL_LIBEXECDIR:PATH=libexec
-
-//Locale-dependent data (DATAROOTDIR/locale)
-CMAKE_INSTALL_LOCALEDIR:PATH=
-
-//Modifiable single-machine data (var)
-CMAKE_INSTALL_LOCALSTATEDIR:PATH=var
-
-//Man documentation (DATAROOTDIR/man)
-CMAKE_INSTALL_MANDIR:PATH=
-
-//C header files for non-gcc (/usr/include)
-CMAKE_INSTALL_OLDINCLUDEDIR:PATH=/usr/include
-
 //Install path prefix, prepended onto install directories.
 CMAKE_INSTALL_PREFIX:PATH=/usr/local
-
-//Run-time variable data (LOCALSTATEDIR/run)
-CMAKE_INSTALL_RUNSTATEDIR:PATH=
-
-//System admin executables (sbin)
-CMAKE_INSTALL_SBINDIR:PATH=sbin
-
-//Modifiable architecture-independent data (com)
-CMAKE_INSTALL_SHAREDSTATEDIR:PATH=com
-
-//Read-only single-machine data (etc)
-CMAKE_INSTALL_SYSCONFDIR:PATH=etc
 
 //Path to a program.
 CMAKE_LINKER:FILEPATH=/usr/bin/ld
@@ -314,18 +237,11 @@ FETCHCONTENT_FULLY_DISCONNECTED:BOOL=OFF
 FETCHCONTENT_QUIET:BOOL=ON
 
 //When not empty, overrides where to find pre-populated content
-// for googletest
-FETCHCONTENT_SOURCE_DIR_GOOGLETEST:PATH=
-
-//When not empty, overrides where to find pre-populated content
 // for yalantinglibs
 FETCHCONTENT_SOURCE_DIR_YALANTINGLIBS:PATH=
 
 //Enables UPDATE_DISCONNECTED behavior for all content population
 FETCHCONTENT_UPDATES_DISCONNECTED:BOOL=OFF
-
-//Enables UPDATE_DISCONNECTED behavior just for population of googletest
-FETCHCONTENT_UPDATES_DISCONNECTED_GOOGLETEST:BOOL=OFF
 
 //Enables UPDATE_DISCONNECTED behavior just for population of yalantinglibs
 FETCHCONTENT_UPDATES_DISCONNECTED_YALANTINGLIBS:BOOL=OFF
@@ -350,14 +266,6 @@ GRPC_INCLUDE_DIR:PATH=/usr/include
 
 //Path to a library.
 GRPC_LIBRARY:FILEPATH=/usr/lib/x86_64-linux-gnu/libgrpc.so
-
-//Use Abseil and RE2. Requires Abseil and RE2 to be separately
-// added to the build.
-GTEST_HAS_ABSL:BOOL=OFF
-
-//Enable installation of googletest. (Projects embedding googletest
-// may want to turn this OFF.)
-INSTALL_GTEST:BOOL=ON
 
 //Install independent standalone
 INSTALL_INDEPENDENT_STANDALONE:BOOL=ON
@@ -488,57 +396,14 @@ gflags_DIR:PATH=/usr/lib/x86_64-linux-gnu/cmake/gflags
 //The directory containing a CMake configuration file for glog.
 glog_DIR:PATH=/usr/lib/x86_64-linux-gnu/cmake/glog
 
-//Value Computed by CMake
-gmock_BINARY_DIR:STATIC=/home/ubuntu/blackbird/build/_deps/googletest-build/googlemock
-
-//Value Computed by CMake
-gmock_IS_TOP_LEVEL:STATIC=OFF
-
-//Value Computed by CMake
-gmock_SOURCE_DIR:STATIC=/home/ubuntu/blackbird/build/_deps/googletest-src/googlemock
-
-//Build all of Google Mock's own tests.
-gmock_build_tests:BOOL=OFF
-
-//Value Computed by CMake
-googletest-distribution_BINARY_DIR:STATIC=/home/ubuntu/blackbird/build/_deps/googletest-build
-
-//Value Computed by CMake
-googletest-distribution_IS_TOP_LEVEL:STATIC=OFF
-
-//Value Computed by CMake
-googletest-distribution_SOURCE_DIR:STATIC=/home/ubuntu/blackbird/build/_deps/googletest-src
-
-//Value Computed by CMake
-gtest_BINARY_DIR:STATIC=/home/ubuntu/blackbird/build/_deps/googletest-build/googletest
-
-//Value Computed by CMake
-gtest_IS_TOP_LEVEL:STATIC=OFF
-
-//Value Computed by CMake
-gtest_SOURCE_DIR:STATIC=/home/ubuntu/blackbird/build/_deps/googletest-src/googletest
-
-//Build gtest's sample programs.
-gtest_build_samples:BOOL=OFF
-
-//Build all of gtest's own tests.
-gtest_build_tests:BOOL=OFF
-
-//Disable uses of pthreads in gtest.
-gtest_disable_pthreads:BOOL=OFF
-
-//Use shared (DLL) run-time lib even when Google Test is built
-// as static lib.
-gtest_force_shared_crt:BOOL=ON
-
-//Build gtest with internal symbols hidden in shared libraries.
-gtest_hide_internal_symbols:BOOL=OFF
-
 //The directory containing a CMake configuration file for nlohmann_json.
 nlohmann_json_DIR:PATH=/usr/lib/cmake/nlohmann_json
 
 //Path to a library.
 pkgcfg_lib_GLOG_glog:FILEPATH=/usr/lib/x86_64-linux-gnu/libglog.so
+
+//Path to a library.
+pkgcfg_lib_LIBURING_uring:FILEPATH=/usr/lib/x86_64-linux-gnu/liburing.so
 
 //Path to a library.
 pkgcfg_lib_UCX_ucp:FILEPATH=/usr/lib/x86_64-linux-gnu/libucp.so
@@ -548,6 +413,9 @@ pkgcfg_lib_UCX_ucs:FILEPATH=/usr/lib/x86_64-linux-gnu/libucs.so
 
 //Path to a library.
 pkgcfg_lib_UCX_uct:FILEPATH=/usr/lib/x86_64-linux-gnu/libuct.so
+
+//Path to a library.
+pkgcfg_lib_YAMLCPP_yaml-cpp:FILEPATH=/usr/lib/x86_64-linux-gnu/libyaml-cpp.so
 
 //Path to a library.
 pkgcfg_lib__OPENSSL_crypto:FILEPATH=/usr/lib/x86_64-linux-gnu/libcrypto.so
@@ -610,22 +478,6 @@ CMAKE_CXX_FLAGS_MINSIZEREL-ADVANCED:INTERNAL=1
 CMAKE_CXX_FLAGS_RELEASE-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_CXX_FLAGS_RELWITHDEBINFO
 CMAKE_CXX_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: CMAKE_C_COMPILER
-CMAKE_C_COMPILER-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: CMAKE_C_COMPILER_AR
-CMAKE_C_COMPILER_AR-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: CMAKE_C_COMPILER_RANLIB
-CMAKE_C_COMPILER_RANLIB-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: CMAKE_C_FLAGS
-CMAKE_C_FLAGS-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: CMAKE_C_FLAGS_DEBUG
-CMAKE_C_FLAGS_DEBUG-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: CMAKE_C_FLAGS_MINSIZEREL
-CMAKE_C_FLAGS_MINSIZEREL-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: CMAKE_C_FLAGS_RELEASE
-CMAKE_C_FLAGS_RELEASE-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: CMAKE_C_FLAGS_RELWITHDEBINFO
-CMAKE_C_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_DLLTOOL
 CMAKE_DLLTOOL-ADVANCED:INTERNAL=1
 //Executable file format
@@ -659,40 +511,8 @@ CMAKE_HAVE_PTHREAD_H:INTERNAL=1
 //Source directory with the top level CMakeLists.txt file for this
 // project
 CMAKE_HOME_DIRECTORY:INTERNAL=/home/ubuntu/blackbird
-//ADVANCED property for variable: CMAKE_INSTALL_BINDIR
-CMAKE_INSTALL_BINDIR-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: CMAKE_INSTALL_DATADIR
-CMAKE_INSTALL_DATADIR-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: CMAKE_INSTALL_DATAROOTDIR
-CMAKE_INSTALL_DATAROOTDIR-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: CMAKE_INSTALL_DOCDIR
-CMAKE_INSTALL_DOCDIR-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: CMAKE_INSTALL_INCLUDEDIR
-CMAKE_INSTALL_INCLUDEDIR-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: CMAKE_INSTALL_INFODIR
-CMAKE_INSTALL_INFODIR-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: CMAKE_INSTALL_LIBDIR
-CMAKE_INSTALL_LIBDIR-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: CMAKE_INSTALL_LIBEXECDIR
-CMAKE_INSTALL_LIBEXECDIR-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: CMAKE_INSTALL_LOCALEDIR
-CMAKE_INSTALL_LOCALEDIR-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: CMAKE_INSTALL_LOCALSTATEDIR
-CMAKE_INSTALL_LOCALSTATEDIR-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: CMAKE_INSTALL_MANDIR
-CMAKE_INSTALL_MANDIR-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: CMAKE_INSTALL_OLDINCLUDEDIR
-CMAKE_INSTALL_OLDINCLUDEDIR-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: CMAKE_INSTALL_RUNSTATEDIR
-CMAKE_INSTALL_RUNSTATEDIR-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: CMAKE_INSTALL_SBINDIR
-CMAKE_INSTALL_SBINDIR-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: CMAKE_INSTALL_SHAREDSTATEDIR
-CMAKE_INSTALL_SHAREDSTATEDIR-ADVANCED:INTERNAL=1
 //Install .so files without execute permission.
 CMAKE_INSTALL_SO_NO_EXE:INTERNAL=1
-//ADVANCED property for variable: CMAKE_INSTALL_SYSCONFDIR
-CMAKE_INSTALL_SYSCONFDIR-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_LINKER
 CMAKE_LINKER-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_MAKE_PROGRAM
@@ -710,7 +530,7 @@ CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_NM
 CMAKE_NM-ADVANCED:INTERNAL=1
 //number of local generators
-CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=8
+CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=4
 //ADVANCED property for variable: CMAKE_OBJCOPY
 CMAKE_OBJCOPY-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_OBJDUMP
@@ -761,8 +581,6 @@ FIND_PACKAGE_MESSAGE_DETAILS_OpenSSL:INTERNAL=[/usr/lib/x86_64-linux-gnu/libcryp
 FIND_PACKAGE_MESSAGE_DETAILS_PkgConfig:INTERNAL=[/usr/bin/pkg-config][v0.29.2()]
 //Details about finding Protobuf
 FIND_PACKAGE_MESSAGE_DETAILS_Protobuf:INTERNAL=[/usr/lib/x86_64-linux-gnu/libprotobuf.so][/usr/include][v3.12.4()]
-//Details about finding Python3
-FIND_PACKAGE_MESSAGE_DETAILS_Python3:INTERNAL=[/usr/bin/python3.10][cfound components: Interpreter ][v3.10.12()]
 //Details about finding Threads
 FIND_PACKAGE_MESSAGE_DETAILS_Threads:INTERNAL=[TRUE][v()]
 //Details about finding ZLIB
@@ -818,6 +636,41 @@ GRPC_GRPC++_REFLECTION_LIBRARY-ADVANCED:INTERNAL=1
 GRPC_INCLUDE_DIR-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: GRPC_LIBRARY
 GRPC_LIBRARY-ADVANCED:INTERNAL=1
+LIBURING_CFLAGS:INTERNAL=
+LIBURING_CFLAGS_I:INTERNAL=
+LIBURING_CFLAGS_OTHER:INTERNAL=
+LIBURING_FOUND:INTERNAL=1
+LIBURING_INCLUDEDIR:INTERNAL=/usr/include
+LIBURING_INCLUDE_DIRS:INTERNAL=
+LIBURING_LDFLAGS:INTERNAL=-L/usr/lib/x86_64-linux-gnu;-luring
+LIBURING_LDFLAGS_OTHER:INTERNAL=
+LIBURING_LIBDIR:INTERNAL=/usr/lib/x86_64-linux-gnu
+LIBURING_LIBRARIES:INTERNAL=uring
+LIBURING_LIBRARY_DIRS:INTERNAL=/usr/lib/x86_64-linux-gnu
+LIBURING_LIBS:INTERNAL=
+LIBURING_LIBS_L:INTERNAL=
+LIBURING_LIBS_OTHER:INTERNAL=
+LIBURING_LIBS_PATHS:INTERNAL=
+LIBURING_MODULE_NAME:INTERNAL=liburing
+LIBURING_PREFIX:INTERNAL=/usr
+LIBURING_STATIC_CFLAGS:INTERNAL=
+LIBURING_STATIC_CFLAGS_I:INTERNAL=
+LIBURING_STATIC_CFLAGS_OTHER:INTERNAL=
+LIBURING_STATIC_INCLUDE_DIRS:INTERNAL=
+LIBURING_STATIC_LDFLAGS:INTERNAL=-L/usr/lib/x86_64-linux-gnu;-luring
+LIBURING_STATIC_LDFLAGS_OTHER:INTERNAL=
+LIBURING_STATIC_LIBDIR:INTERNAL=
+LIBURING_STATIC_LIBRARIES:INTERNAL=uring
+LIBURING_STATIC_LIBRARY_DIRS:INTERNAL=/usr/lib/x86_64-linux-gnu
+LIBURING_STATIC_LIBS:INTERNAL=
+LIBURING_STATIC_LIBS_L:INTERNAL=
+LIBURING_STATIC_LIBS_OTHER:INTERNAL=
+LIBURING_STATIC_LIBS_PATHS:INTERNAL=
+LIBURING_VERSION:INTERNAL=2.0
+LIBURING_liburing_INCLUDEDIR:INTERNAL=
+LIBURING_liburing_LIBDIR:INTERNAL=
+LIBURING_liburing_PREFIX:INTERNAL=
+LIBURING_liburing_VERSION:INTERNAL=
 //ADVANCED property for variable: OPENSSL_CRYPTO_LIBRARY
 OPENSSL_CRYPTO_LIBRARY-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: OPENSSL_INCLUDE_DIR
@@ -879,14 +732,47 @@ UCX_ucx_INCLUDEDIR:INTERNAL=
 UCX_ucx_LIBDIR:INTERNAL=
 UCX_ucx_PREFIX:INTERNAL=
 UCX_ucx_VERSION:INTERNAL=
+YAMLCPP_CFLAGS:INTERNAL=
+YAMLCPP_CFLAGS_I:INTERNAL=
+YAMLCPP_CFLAGS_OTHER:INTERNAL=
+YAMLCPP_FOUND:INTERNAL=1
+YAMLCPP_INCLUDEDIR:INTERNAL=/usr/include
+YAMLCPP_INCLUDE_DIRS:INTERNAL=
+YAMLCPP_LDFLAGS:INTERNAL=-L/usr/lib/x86_64-linux-gnu;-lyaml-cpp
+YAMLCPP_LDFLAGS_OTHER:INTERNAL=
+YAMLCPP_LIBDIR:INTERNAL=/usr/lib/x86_64-linux-gnu
+YAMLCPP_LIBRARIES:INTERNAL=yaml-cpp
+YAMLCPP_LIBRARY_DIRS:INTERNAL=/usr/lib/x86_64-linux-gnu
+YAMLCPP_LIBS:INTERNAL=
+YAMLCPP_LIBS_L:INTERNAL=
+YAMLCPP_LIBS_OTHER:INTERNAL=
+YAMLCPP_LIBS_PATHS:INTERNAL=
+YAMLCPP_MODULE_NAME:INTERNAL=yaml-cpp
+YAMLCPP_PREFIX:INTERNAL=/usr
+YAMLCPP_STATIC_CFLAGS:INTERNAL=
+YAMLCPP_STATIC_CFLAGS_I:INTERNAL=
+YAMLCPP_STATIC_CFLAGS_OTHER:INTERNAL=
+YAMLCPP_STATIC_INCLUDE_DIRS:INTERNAL=
+YAMLCPP_STATIC_LDFLAGS:INTERNAL=-L/usr/lib/x86_64-linux-gnu;-lyaml-cpp
+YAMLCPP_STATIC_LDFLAGS_OTHER:INTERNAL=
+YAMLCPP_STATIC_LIBDIR:INTERNAL=
+YAMLCPP_STATIC_LIBRARIES:INTERNAL=yaml-cpp
+YAMLCPP_STATIC_LIBRARY_DIRS:INTERNAL=/usr/lib/x86_64-linux-gnu
+YAMLCPP_STATIC_LIBS:INTERNAL=
+YAMLCPP_STATIC_LIBS_L:INTERNAL=
+YAMLCPP_STATIC_LIBS_OTHER:INTERNAL=
+YAMLCPP_STATIC_LIBS_PATHS:INTERNAL=
+YAMLCPP_VERSION:INTERNAL=0.7.0
+YAMLCPP_yaml-cpp_INCLUDEDIR:INTERNAL=
+YAMLCPP_yaml-cpp_LIBDIR:INTERNAL=
+YAMLCPP_yaml-cpp_PREFIX:INTERNAL=
+YAMLCPP_yaml-cpp_VERSION:INTERNAL=
 //ADVANCED property for variable: ZLIB_INCLUDE_DIR
 ZLIB_INCLUDE_DIR-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: ZLIB_LIBRARY_DEBUG
 ZLIB_LIBRARY_DEBUG-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: ZLIB_LIBRARY_RELEASE
 ZLIB_LIBRARY_RELEASE-ADVANCED:INTERNAL=1
-//CMAKE_INSTALL_PREFIX during last run
-_GNUInstallDirs_LAST_CMAKE_INSTALL_PREFIX:INTERNAL=/usr/local
 _OPENSSL_CFLAGS:INTERNAL=
 _OPENSSL_CFLAGS_I:INTERNAL=
 _OPENSSL_CFLAGS_OTHER:INTERNAL=
@@ -922,16 +808,15 @@ _OPENSSL_openssl_INCLUDEDIR:INTERNAL=
 _OPENSSL_openssl_LIBDIR:INTERNAL=
 _OPENSSL_openssl_PREFIX:INTERNAL=
 _OPENSSL_openssl_VERSION:INTERNAL=
-//Path to a program.
-_Python3_EXECUTABLE:INTERNAL=/usr/bin/python3.10
-//Python3 Properties
-_Python3_INTERPRETER_PROPERTIES:INTERNAL=Python;3;10;12;64;;cpython-310-x86_64-linux-gnu;/usr/lib/python3.10;/usr/lib/python3.10;/usr/lib/python3/dist-packages;/usr/lib/python3/dist-packages
-_Python3_INTERPRETER_SIGNATURE:INTERNAL=b91b4035ecb3bb3f5760d35922531bcd
 __pkg_config_arguments_GLOG:INTERNAL=REQUIRED;libglog
+__pkg_config_arguments_LIBURING:INTERNAL=REQUIRED;liburing
 __pkg_config_arguments_UCX:INTERNAL=REQUIRED;ucx
+__pkg_config_arguments_YAMLCPP:INTERNAL=REQUIRED;yaml-cpp
 __pkg_config_arguments__OPENSSL:INTERNAL=QUIET;openssl
 __pkg_config_checked_GLOG:INTERNAL=1
+__pkg_config_checked_LIBURING:INTERNAL=1
 __pkg_config_checked_UCX:INTERNAL=1
+__pkg_config_checked_YAMLCPP:INTERNAL=1
 __pkg_config_checked__OPENSSL:INTERNAL=1
 //Result of TRY_COMPILE
 _gRPC_GET_VERSION_COMPILE_STATUS:INTERNAL=TRUE
@@ -955,32 +840,21 @@ boost_regex_DIR-ADVANCED:INTERNAL=1
 boost_system_DIR-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: boost_thread_DIR
 boost_thread_DIR-ADVANCED:INTERNAL=1
-cmake_package_name:INTERNAL=GTest
-generated_dir:INTERNAL=/home/ubuntu/blackbird/build/_deps/googletest-build/googletest/generated
-//ADVANCED property for variable: gmock_build_tests
-gmock_build_tests-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: gtest_build_samples
-gtest_build_samples-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: gtest_build_tests
-gtest_build_tests-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: gtest_disable_pthreads
-gtest_disable_pthreads-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: gtest_force_shared_crt
-gtest_force_shared_crt-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: gtest_hide_internal_symbols
-gtest_hide_internal_symbols-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: pkgcfg_lib_GLOG_glog
 pkgcfg_lib_GLOG_glog-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: pkgcfg_lib_LIBURING_uring
+pkgcfg_lib_LIBURING_uring-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: pkgcfg_lib_UCX_ucp
 pkgcfg_lib_UCX_ucp-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: pkgcfg_lib_UCX_ucs
 pkgcfg_lib_UCX_ucs-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: pkgcfg_lib_UCX_uct
 pkgcfg_lib_UCX_uct-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: pkgcfg_lib_YAMLCPP_yaml-cpp
+pkgcfg_lib_YAMLCPP_yaml-cpp-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: pkgcfg_lib__OPENSSL_crypto
 pkgcfg_lib__OPENSSL_crypto-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: pkgcfg_lib__OPENSSL_ssl
 pkgcfg_lib__OPENSSL_ssl-ADVANCED:INTERNAL=1
 prefix_result:INTERNAL=/usr/lib/x86_64-linux-gnu
-targets_export_name:INTERNAL=GTestTargets
 

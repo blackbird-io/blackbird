@@ -1,4 +1,5 @@
 #include "blackbird/worker/storage/ram_backend.h"
+#include "blackbird/worker/storage/iouring_disk_backend.h"
 
 #include <glog/logging.h>
 #include <algorithm>
@@ -56,7 +57,6 @@ Result<ReservationToken> RamBackend::reserve_shard(uint64_t size, const std::str
         return ErrorCode::OUT_OF_MEMORY;
     }
     
-    // Find a free offset
     uint64_t offset = find_free_offset(size);
     if (offset == UINT64_MAX) {
         LOG(WARNING) << "Cannot find contiguous space for " << size << " bytes";
@@ -69,7 +69,7 @@ Result<ReservationToken> RamBackend::reserve_shard(uint64_t size, const std::str
     
     ReservationToken token;
     token.token_id = token_id;
-    token.pool_id = ""; // Will be set by caller
+    token.pool_id = ""; 
     token.remote_addr = base_address_ + offset;
     token.rkey = rkey_;
     token.size = size;
@@ -282,10 +282,12 @@ std::unique_ptr<StorageBackend> create_storage_backend(StorageClass storage_clas
         
         case StorageClass::NVME:
         case StorageClass::SSD:
-        case StorageClass::HDD:
-            LOG(ERROR) << "Storage class " << static_cast<uint32_t>(storage_class) 
-                      << " not implemented yet";
-            return nullptr;
+        case StorageClass::HDD: {
+            // Parse mount path from config
+            std::string mount_path = config.empty() ? "/tmp" : config;
+            // Use high-performance io_uring backend for disk storage
+            return std::make_unique<IoUringDiskBackend>(capacity, storage_class, mount_path);
+        }
         
         default:
             LOG(ERROR) << "Unknown storage class: " << static_cast<uint32_t>(storage_class);

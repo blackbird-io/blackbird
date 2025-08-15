@@ -34,6 +34,9 @@ pkg_check_modules(GLOG REQUIRED libglog)
 # yaml-cpp for configuration parsing
 find_package(yaml-cpp REQUIRED)
 
+# liburing for high-performance async I/O
+pkg_check_modules(LIBURING REQUIRED liburing)
+
 include(FetchContent)
 
 FetchContent_Declare(
