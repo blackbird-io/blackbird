@@ -23,16 +23,20 @@ void signal_handler(int signal) {
 }
 
 void print_usage(const char* program_name) {
-    std::cout << "Usage: " << program_name << " [options]\n";
+    std::cout << "Usage: " << program_name << " <config_file> [options]\n";
+    std::cout << "Arguments:\n";
+    std::cout << "  config_file                   YAML configuration file path (REQUIRED)\n";
     std::cout << "Options:\n";
-    std::cout << "  --etcd-endpoints <endpoints>  Comma-separated etcd endpoints (default: localhost:2379)\n";
-    std::cout << "  --listen-address <address>    RPC listen address (default: 0.0.0.0:9090)\n";
-    std::cout << "  --http-port <port>           HTTP metrics port (default: 9091)\n";
-    std::cout << "  --cluster-id <id>            Cluster identifier (default: blackbird_cluster)\n";
+    std::cout << "  --etcd-endpoints <endpoints>  Override etcd endpoints\n";
+    std::cout << "  --listen-address <address>    Override RPC listen address\n";
+    std::cout << "  --http-port <port>           Override HTTP metrics port\n";
+    std::cout << "  --cluster-id <id>            Override cluster identifier\n";
     std::cout << "  --help                       Show this help message\n";
     std::cout << "\n";
-    std::cout << "Example:\n";
-    std::cout << "  " << program_name << " --etcd-endpoints localhost:2379,localhost:2380\n";
+    std::cout << "Examples:\n";
+    std::cout << "  " << program_name << " configs/keystone.yaml\n";
+    std::cout << "  " << program_name << " keystone.yaml --cluster-id prod_cluster\n";
+    std::cout << "  " << program_name << " /path/to/keystone.yaml --etcd-endpoints localhost:2379,localhost:2380\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -43,17 +47,32 @@ int main(int argc, char* argv[]) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
     
-    // Default configuration
-    KeystoneConfig config;
-    config.etcd_endpoints = "localhost:2379";
-    config.listen_address = "0.0.0.0:9090";
-    config.http_metrics_port = "9091";
-    config.cluster_id = "blackbird_cluster";
-    config.enable_gc = true;
-    config.enable_ha = true;
+    // Require configuration file as first argument
+    if (argc < 2) {
+        std::cerr << "Error: Configuration file is required\n\n";
+        print_usage(argv[0]);
+        return 1;
+    }
     
-    // Parse command line arguments
-    for (int i = 1; i < argc; ++i) {
+    std::string config_file = argv[1];
+    if (config_file == "--help") {
+        print_usage(argv[0]);
+        return 0;
+    }
+    
+    LOG(INFO) << "Loading configuration from: " << config_file;
+    KeystoneConfig config;
+    try {
+        config = KeystoneConfig::from_yaml(config_file);
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Failed to load configuration: " << e.what();
+        return 1;
+    }
+    
+    int arg_start = 2;  // Start parsing from second argument
+    
+    // Parse command line arguments (these override config file values)
+    for (int i = arg_start; i < argc; ++i) {
         std::string arg = argv[i];
         
         if (arg == "--help") {

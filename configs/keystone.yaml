@@ -1,0 +1,37 @@
+# Blackbird Keystone Configuration
+keystone:
+  # Identity
+  cluster_id: "blackbird_cluster"
+  service_id: ""  # Auto-generated if empty
+  
+  # Connectivity  
+  etcd_endpoints:
+    - "localhost:2379"
+  listen_address: "0.0.0.0:9090"
+  http_metrics_port: "9091"
+  
+  # High Availability
+  enable_ha: false
+  enable_gc: true
+  
+  # Performance Tuning
+  eviction_ratio: 0.1
+  high_watermark: 0.8
+  
+  # TTL and Timing Configuration
+  service_registration_ttl_sec: 60       # How long keystone service registration lasts
+  service_refresh_interval_sec: 30       # How often to refresh service registration 
+  worker_heartbeat_ttl_sec: 30           # Worker considered stale after this time
+  client_ttl_sec: 300                    # Client session timeout
+  gc_interval_sec: 30                    # Garbage collection frequency
+  health_check_interval_sec: 10          # Health check frequency
+  
+  # Operational Settings
+  max_replicas: 3                        # Maximum replicas per object
+  default_replicas: 1                    # Default replication factor
+  
+# Logging Configuration (optional)
+logging:
+  level: "INFO"
+  log_to_file: false
+  log_file_path: "/tmp/blackbird_keystone.log"

@@ -17,14 +17,14 @@ make -j4
 Demonstrates how to start a standalone Worker service with memory pools, etcd registration, and TTL-based heartbeat mechanism.
 
 ```bash
-./examples/worker_example [config_file]
+./examples/worker_example --config configs/worker.yaml [--worker-id <id>] [--node-id <id>]
 ```
 
 #### keystone_example.cpp
 Demonstrates how to start a standalone Keystone (master) service for cluster coordination, worker discovery, and object placement decisions.
 
 ```bash
-./examples/keystone_example [config_file]
+./examples/keystone_example configs/keystone.yaml [--cluster-id <id>] [--listen-address <addr>]
 ```
 
 #### simple_client_test.cpp

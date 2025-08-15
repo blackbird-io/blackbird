@@ -9,6 +9,7 @@ set(BLACKBIRD_SOURCES
     worker/storage/ram_backend.cpp
     transport/ucx_engine.cpp
     common/error/error_codes.cpp
+    common/types.cpp
 )
 
 # Build the main blackbird library

@@ -387,6 +387,7 @@ struct KeystoneConfig {
 	std::string etcd_endpoints;  // Comma-separated etcd endpoints
 	std::string listen_address{"0.0.0.0:9090"};
 	std::string http_metrics_port{"9091"};
+	std::string service_id;  // Auto-generated if empty
 	
 	bool enable_gc{true};
 	bool enable_ha{false};  // High availability mode
@@ -395,9 +396,26 @@ struct KeystoneConfig {
 	int64_t client_ttl_sec{DEFAULT_CLIENT_TTL_SEC};
 	int64_t worker_heartbeat_ttl_sec{30};  // Worker considered stale after 30s without heartbeat
 	
+	// New configurable timing parameters
+	int64_t service_registration_ttl_sec{60};    // How long keystone service registration lasts
+	int64_t service_refresh_interval_sec{30};    // How often to refresh service registration
+	int64_t gc_interval_sec{30};                 // Garbage collection frequency
+	int64_t health_check_interval_sec{10};       // Health check frequency
+	
+	// Object management
+	int32_t max_replicas{3};                     // Maximum replicas per object
+	int32_t default_replicas{1};                 // Default replication factor
+	
 	NLOHMANN_DEFINE_TYPE_INTRUSIVE(KeystoneConfig, cluster_id, etcd_endpoints, listen_address,
-	                               http_metrics_port, enable_gc, enable_ha, eviction_ratio,
-	                               high_watermark, client_ttl_sec, worker_heartbeat_ttl_sec)
+	                               http_metrics_port, service_id, enable_gc, enable_ha, eviction_ratio,
+	                               high_watermark, client_ttl_sec, worker_heartbeat_ttl_sec,
+	                               service_registration_ttl_sec, service_refresh_interval_sec,
+	                               gc_interval_sec, health_check_interval_sec, max_replicas, default_replicas)
+	
+	/**
+	 * @brief Load configuration from YAML file
+	 */
+	static KeystoneConfig from_yaml(const std::string& file_path);
 };
 
 /**

@@ -385,11 +385,15 @@ ErrorCode KeystoneService::setup_etcd_integration() {
     }
     
     // Create consistent service ID for this instance
-    service_id_ = "keystone-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    if (config_.service_id.empty()) {
+        service_id_ = "keystone-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    } else {
+        service_id_ = config_.service_id;
+    }
     
     // Register keystone service with etcd using TTL (no explicit lease management)
     std::string key = "/blackbird/services/blackbird-keystone/" + service_id_;
-    err = etcd_->put_with_ttl(key, config_.listen_address, 60);  // 60 second TTL
+    err = etcd_->put_with_ttl(key, config_.listen_address, config_.service_registration_ttl_sec);
     if (err != ErrorCode::OK) {
         LOG(ERROR) << "Failed to register keystone service with etcd: " << error::to_string(err);
         return err;
@@ -403,7 +407,7 @@ void KeystoneService::run_garbage_collection() {
     LOG(INFO) << "Starting garbage collection thread";
     
     while (running_.load()) {
-        std::this_thread::sleep_for(std::chrono::seconds(30));  // Run every 30 seconds
+        std::this_thread::sleep_for(std::chrono::seconds(config_.gc_interval_sec));
         
         if (!running_.load()) break;
         
@@ -431,7 +435,7 @@ void KeystoneService::run_health_checks() {
     LOG(INFO) << "Starting health check thread";
     
     while (running_.load()) {
-        std::this_thread::sleep_for(std::chrono::seconds(10));  // Check every 10 seconds
+        std::this_thread::sleep_for(std::chrono::seconds(config_.health_check_interval_sec));
         
         if (!running_.load()) break;
         
@@ -453,18 +457,18 @@ void KeystoneService::run_etcd_keepalive() {
     LOG(INFO) << "Starting etcd TTL refresh thread";
     
     while (running_.load()) {
-        std::this_thread::sleep_for(std::chrono::seconds(config_.client_ttl_sec / 2));  // Refresh at 1/2 of TTL
+        std::this_thread::sleep_for(std::chrono::seconds(config_.service_refresh_interval_sec));
         
         if (!running_.load()) break;
         
         if (etcd_ && !service_id_.empty()) {
             // Refresh service registration with TTL (no explicit lease management)
             std::string key = "/blackbird/services/blackbird-keystone/" + service_id_;
-            auto err = etcd_->put_with_ttl(key, config_.listen_address, 60);  // 60 second TTL
+            auto err = etcd_->put_with_ttl(key, config_.listen_address, config_.service_registration_ttl_sec);
             if (err != ErrorCode::OK) {
                 LOG(WARNING) << "Failed to refresh keystone service registration: " << error::to_string(err);
             } else {
-                VLOG(2) << "Refreshed keystone service registration with 60s TTL";
+                VLOG(2) << "Refreshed keystone service registration with " << config_.service_registration_ttl_sec << "s TTL";
             }
         }
     }

@@ -17,15 +17,16 @@ void signal_handler(int signal) {
 }
 
 void print_usage(const char* program_name) {
-    std::cout << "Usage: " << program_name << " [OPTIONS]\n";
-    std::cout << "\nOptions:\n";
-    std::cout << "  --config <file>           YAML configuration file (default: ../configs/worker.yaml)\n";
+    std::cout << "Usage: " << program_name << " --config <file> [OPTIONS]\n";
+    std::cout << "\nRequired:\n";
+    std::cout << "  --config <file>           YAML configuration file (REQUIRED)\n";
+    std::cout << "\nOptional:\n";
     std::cout << "  --worker-id <id>          Override worker ID from config\n";
     std::cout << "  --node-id <id>            Override node ID from config\n";
     std::cout << "  --help                    Show this help message\n";
-    std::cout << "\nExample:\n";
-    std::cout << "  " << program_name << " --config /path/to/worker.yaml\n";
-    std::cout << "  " << program_name << " --worker-id worker-2 --node-id node-b\n";
+    std::cout << "\nExamples:\n";
+    std::cout << "  " << program_name << " --config configs/worker.yaml\n";
+    std::cout << "  " << program_name << " --config worker.yaml --worker-id worker-2 --node-id node-b\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -39,9 +40,12 @@ int main(int argc, char* argv[]) {
     signal(SIGTERM, signal_handler);
     
     // Parse command line arguments
-    std::string config_file = "../configs/worker.yaml";
+    std::string config_file;
     std::string override_worker_id;
     std::string override_node_id;
+    
+    // Require --config argument
+    bool config_provided = false;
     
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
@@ -51,6 +55,7 @@ int main(int argc, char* argv[]) {
             return 0;
         } else if (arg == "--config" && i + 1 < argc) {
             config_file = argv[++i];
+            config_provided = true;
         } else if (arg == "--worker-id" && i + 1 < argc) {
             override_worker_id = argv[++i];
         } else if (arg == "--node-id" && i + 1 < argc) {
@@ -60,6 +65,12 @@ int main(int argc, char* argv[]) {
             print_usage(argv[0]);
             return 1;
         }
+    }
+    
+    if (!config_provided) {
+        std::cerr << "Error: --config argument is required\n\n";
+        print_usage(argv[0]);
+        return 1;
     }
     
     try {
