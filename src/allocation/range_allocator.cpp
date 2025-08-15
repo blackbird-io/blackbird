@@ -265,7 +265,6 @@ size_t RangeAllocator::get_free_space(StorageClass storage_class) const {
 
 bool RangeAllocator::can_allocate(const AllocationRequest& request,
                                  const std::unordered_map<MemoryPoolId, MemoryPool>& pools) const {
-    // Quick capacity check
     size_t total_needed = request.data_size * request.replication_factor;
     size_t total_available = 0;
     
@@ -289,6 +288,9 @@ RangeAllocator::allocate_with_striping(const AllocationRequest& request,
     AllocationResult result{};
     result.copies.reserve(request.replication_factor);
     
+    // Track all ranges allocated across all copies to enable full rollback on failure
+    std::vector<std::pair<MemoryPoolId, Range>> allocated_ranges;
+    
     // Allocate each copy
     for (size_t copy_idx = 0; copy_idx < request.replication_factor; ++copy_idx) {
         std::vector<std::pair<MemoryPoolId, Range>> copy_ranges;
@@ -304,23 +306,27 @@ RangeAllocator::allocate_with_striping(const AllocationRequest& request,
             if (current_shard_size < request.min_shard_size && workers_per_copy > 1) {
                 // Shard too small, try to use fewer workers
                 workers_per_copy = std::max(1UL, per_copy_size / request.min_shard_size);
-                break; // Restart allocation with fewer workers
+                // Restart allocation with fewer workers is not supported in-place
+                // Fail this attempt and rollback all allocated ranges
+                rollback_allocation(allocated_ranges);
+                return ErrorCode::INSUFFICIENT_SPACE;
             }
             
             std::shared_lock<std::shared_mutex> lock(pools_mutex_);
             auto pool_it = pool_allocators_.find(pool_id);
             if (pool_it == pool_allocators_.end()) {
-                rollback_allocation(copy_ranges);
+                rollback_allocation(allocated_ranges);
                 return ErrorCode::MEMORY_POOL_NOT_FOUND;
             }
             
             auto range = pool_it->second->allocate(current_shard_size);
             if (!range) {
-                rollback_allocation(copy_ranges);
+                rollback_allocation(allocated_ranges);
                 return ErrorCode::INSUFFICIENT_SPACE;
             }
             
             copy_ranges.emplace_back(pool_id, *range);
+            allocated_ranges.emplace_back(pool_id, *range);
         }
         
         // TODO: Create CopyPlacement from ranges
@@ -330,9 +336,10 @@ RangeAllocator::allocate_with_striping(const AllocationRequest& request,
         result.total_shards_created += copy_ranges.size();
     }
     
-    // Commit allocation
-    auto commit_result = commit_allocation(request.object_key, {});  // TODO: Aggregate all ranges
+    // Commit allocation of all ranges. On failure, rollback everything
+    auto commit_result = commit_allocation(request.object_key, allocated_ranges);
     if (commit_result != ErrorCode::OK) {
+        rollback_allocation(allocated_ranges);
         return commit_result;
     }
     
@@ -343,12 +350,11 @@ RangeAllocator::allocate_with_striping(const AllocationRequest& request,
 Result<AllocationResult>
 RangeAllocator::allocate_contiguous(const AllocationRequest& request,
                                    const std::vector<MemoryPoolId>& candidate_pools) {
-    // Try to allocate each copy as a single contiguous range
     // TODO: Implement contiguous allocation strategy
     return ErrorCode::NOT_IMPLEMENTED;
 }
 
-// Select pools that can satisfy the request by prioritizing preferred classes first, then falling back.
+// Select pools that can satisfy by prioritizing preferred classes first, then falling back.
 // Guarantees that the returned set can meet per-pool shard size for some workers_per_copy = [1, max_workers_per_copy].
 std::vector<MemoryPoolId> 
 RangeAllocator::select_candidate_pools(const AllocationRequest& request,
