@@ -376,14 +376,12 @@ RangeAllocator::allocate_with_striping(const AllocationRequest& request,
                 }
             }
             
-            // Create memory location
             MemoryLocation mem_location{
                 .remote_addr = pool.ucx_remote_addr + range.offset,
                 .rkey = static_cast<uint32_t>(rkey),
                 .size = range.length
             };
             
-            // Create shard placement
             ShardPlacement shard{
                 .pool_id = pool_id,
                 .worker_id = pool.node_id,
@@ -414,7 +412,7 @@ RangeAllocator::allocate_with_striping(const AllocationRequest& request,
 Result<AllocationResult>
 RangeAllocator::allocate_contiguous(const AllocationRequest& request,
                                    const std::vector<MemoryPoolId>& candidate_pools) {
-    // TODO: Implement contiguous allocation strategy
+    // TODO: Contiguous allocation strategy is not supported yet.
     return ErrorCode::NOT_IMPLEMENTED;
 }
 

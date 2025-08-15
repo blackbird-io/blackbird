@@ -524,8 +524,6 @@ ErrorCode KeystoneService::allocate_data_copies(const ObjectKey& key, size_t dat
 }
 
 void KeystoneService::cleanup_stale_workers() {
-    // No stale-removal based on heartbeats. Workers are removed when their keys disappear (TTL expiry),
-    // handled by watch_worker_registry_namespace.
 }
 
 void KeystoneService::evict_objects_if_needed() {
@@ -553,7 +551,6 @@ void KeystoneService::evict_objects_if_needed() {
         return;
     }
     
-    // candidates for eviction (non-soft-pinned objects)
     std::vector<std::pair<std::chrono::system_clock::time_point, ObjectKey>> candidates;
     for (const auto& [key, object_info] : objects_) {
         // Only evict objects that are not soft pinned

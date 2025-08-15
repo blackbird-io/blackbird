@@ -529,7 +529,7 @@ TEST(RangeAllocatorStriping, ConcurrentAllocationsFragmentation) {
             .preferred_classes = {StorageClass::RAM_CPU},
             .preferred_node = "",
             .enable_locality_awareness = true,
-            .enable_striping = false,
+            .enable_striping = true,
             .prefer_contiguous = false,
             .min_shard_size = 1024
         };
@@ -554,7 +554,7 @@ TEST(RangeAllocatorStriping, ConcurrentAllocationsFragmentation) {
         .preferred_classes = {StorageClass::RAM_CPU},
         .preferred_node = "",
         .enable_locality_awareness = true,
-        .enable_striping = false,
+        .enable_striping = true,
         .prefer_contiguous = false,
         .min_shard_size = 1024
     };
@@ -654,8 +654,10 @@ TEST(RangeAllocatorStriping, NodeLocalityPreference) {
 TEST(RangeAllocatorStriping, ExtremeShardSizeConstraints) {
     RangeAllocator ra;
     std::unordered_map<MemoryPoolId, MemoryPool> pools;
-    pools["p1"] = make_pool("p1", 1024 * 16);
-    pools["p2"] = make_pool("p2", 1024 * 16);
+    // Create 8 pools to support 8 workers
+    for (int i = 0; i < 8; ++i) {
+        pools["p" + std::to_string(i)] = make_pool("p" + std::to_string(i), 1024 * 16);
+    }
 
     AllocationRequest req{
         .object_key = "obj-extreme-min-shard",
@@ -805,7 +807,7 @@ TEST(RangeAllocatorStriping, MemoryLocationOffsetCalculation) {
             .preferred_classes = {StorageClass::RAM_CPU},
             .preferred_node = "",
             .enable_locality_awareness = true,
-            .enable_striping = false,
+            .enable_striping = true,
             .prefer_contiguous = false,
             .min_shard_size = 1024
         };

@@ -20,7 +20,6 @@ MemoryPool make_pool(const std::string& id, size_t size, size_t used = 0) {
     pool.size = size;
     pool.used = used;
     pool.storage_class = StorageClass::RAM_CPU;
-    // UCX sockaddr fields needed by PoolAllocator
     pool.ucx_endpoint = "127.0.0.1:12345";
     pool.ucx_remote_addr = 0x10000000ULL;
     pool.ucx_rkey_hex = "DEADBEEF";
@@ -72,17 +71,14 @@ TEST(PoolAllocatorFit, BestFitChoosesTightestRange) {
     auto pool = make_pool("pool-A", 1000);
     PoolAllocator alloc{pool};
 
-    // Create allocated layout: [0..100)[100..300)[300..600)[600..1000)
     auto a = alloc.allocate(100); ASSERT_TRUE(a);
     auto b = alloc.allocate(200); ASSERT_TRUE(b);
     auto c = alloc.allocate(300); ASSERT_TRUE(c);
     auto d = alloc.allocate(400); ASSERT_TRUE(d);
 
-    // Free B and D to form free blocks of sizes 200 and 400
     alloc.free(*b);
     alloc.free(*d);
 
-    // Best fit for 150 should choose former B range at offset 100 (size 200)
     auto r = alloc.allocate(150, /*prefer_best_fit=*/true);
     ASSERT_TRUE(r);
     EXPECT_EQ(r->offset, 100u);
@@ -98,11 +94,9 @@ TEST(PoolAllocatorFit, FirstFitChoosesLowestOffset) {
     auto c = alloc.allocate(300); ASSERT_TRUE(c);
     auto d = alloc.allocate(400); ASSERT_TRUE(d);
 
-    // Free C (size 300 at offset 300) and D (size 400 at offset 600)
     alloc.free(*c);
     alloc.free(*d);
 
-    // First fit for 250 should pick offset 300 (size 300), not 600
     auto r = alloc.allocate(250, /*prefer_best_fit=*/false);
     ASSERT_TRUE(r);
     EXPECT_EQ(r->offset, 300u);
@@ -112,18 +106,15 @@ TEST(PoolAllocatorFreeMerge, MergeWithPrevAndNextNeighborsOnly) {
     auto pool = make_pool("pool-A", 1000);
     PoolAllocator alloc{pool};
 
-    // Allocate three blocks: A[0..100), B[100..300), C[300..600)
     auto a = alloc.allocate(100); ASSERT_TRUE(a);
     auto b = alloc.allocate(200); ASSERT_TRUE(b);
     auto c = alloc.allocate(300); ASSERT_TRUE(c);
 
-    // Free A and C; after freeing C it merges with tail -> free blocks [0..100) and [300..1000)
     alloc.free(*a);
     alloc.free(*c);
     EXPECT_EQ(alloc.total_free(), 800u);
     EXPECT_EQ(alloc.largest_free_block(), 700u);
 
-    // Now free B; should merge with prev [0..100) and next [600..1000) to form [0..1000)
     alloc.free(*b);
     EXPECT_EQ(alloc.total_free(), 1000u);
     EXPECT_EQ(alloc.largest_free_block(), 1000u);
@@ -137,15 +128,12 @@ TEST(PoolAllocatorFreeMerge, MergeWithOnlyPrevOrOnlyNext) {
     auto b = alloc.allocate(200); ASSERT_TRUE(b);   // [100..300)
     auto c = alloc.allocate(100); ASSERT_TRUE(c);   // [300..400)
 
-    // Free B first -> free [100..300)
     alloc.free(*b);
 
-    // Free C next -> merges with [100..300) and tail [400..1000) -> [100..1000)
     alloc.free(*c);
     EXPECT_EQ(alloc.total_free(), 900u);
     EXPECT_EQ(alloc.largest_free_block(), 900u);
 
-    // Free A -> merges with [100..1000) to produce [0..1000)
     alloc.free(*a);
     EXPECT_EQ(alloc.total_free(), 1000u);
     EXPECT_EQ(alloc.largest_free_block(), 1000u);
@@ -159,15 +147,12 @@ TEST(PoolAllocatorFreeMerge, NoMergeWhenNonAdjacent) {
     auto b = alloc.allocate(100); ASSERT_TRUE(b);   // [100..200)
     auto c = alloc.allocate(100); ASSERT_TRUE(c);   // [200..300)
 
-    // Create a gap by allocating and not freeing [300..400)
     auto d = alloc.allocate(100); ASSERT_TRUE(d);   // [300..400)
     auto e = alloc.allocate(100); ASSERT_TRUE(e);   // [400..500)
 
-    // Free A and C only. These are non-adjacent free blocks [0..100) and [200..300)
     alloc.free(*a);
     alloc.free(*c);
 
-    // Free B merges between A and C into [0..300)
     alloc.free(*b);
     EXPECT_EQ(alloc.largest_free_block(), 500u); // tail [500..1000)
 }
@@ -180,19 +165,16 @@ TEST(PoolAllocatorStats, FragmentationComputesCorrectly) {
     auto b = alloc.allocate(200); ASSERT_TRUE(b); // [100..300)
     auto c = alloc.allocate(50);  ASSERT_TRUE(c); // [300..350)
 
-    // Free b only: creates two free blocks [100..300) and [350..1000)
     alloc.free(*b);
     EXPECT_EQ(alloc.total_free(), 850u);  // 200 + 650
     EXPECT_EQ(alloc.largest_free_block(), 650u);
     EXPECT_NEAR(alloc.fragmentation_ratio(), 1.0 - (650.0 / 850.0), 1e-9);
 
-    // Free c next: merges [100..300), [300..350), and [350..1000) -> [100..1000)
     alloc.free(*c);
     EXPECT_EQ(alloc.total_free(), 900u);  // 100..1000 free
     EXPECT_EQ(alloc.largest_free_block(), 900u);
     EXPECT_DOUBLE_EQ(alloc.fragmentation_ratio(), 0.0);
 
-    // Free a finally: all free merges into single block [0..1000)
     alloc.free(*a);
     EXPECT_EQ(alloc.total_free(), 1000u);
     EXPECT_EQ(alloc.largest_free_block(), 1000u);
@@ -221,12 +203,10 @@ TEST(PoolAllocatorConcurrency, AllocateAndFreeFromMultipleThreads) {
     for (int i = 0; i < 8; ++i) threads.emplace_back(allocate_worker);
     for (auto& t : threads) t.join();
 
-    // All space should be allocated in multiples of block_size
     size_t allocated_bytes = 0;
     for (const auto& r : allocated) allocated_bytes += r.length;
     EXPECT_LE(allocated_bytes, pool_size);
 
-    // Randomize free order and free in parallel
     std::mt19937 rng(12345);
     std::shuffle(allocated.begin(), allocated.end(), rng);
 

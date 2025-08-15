@@ -246,14 +246,12 @@ ErrorCode EtcdService::keep_alive(EtcdLeaseId lease_id) {
     if (!connected_) return ErrorCode::ETCD_ERROR;
     
     try {
-        // Send keepalive request to renew the lease
         auto keepalive_resp = impl_->client->leasekeepalive(lease_id);
         if (!keepalive_resp) {
             LOG(WARNING) << "Failed to send keepalive for lease " << lease_id;
             return ErrorCode::ETCD_ERROR;
         }
 
-        // Verify lease was renewed by checking TTL
         auto ttl_resp = impl_->client->leasetimetolive(lease_id);
         if (!ttl_resp.is_ok()) {
             LOG(WARNING) << "Failed to check TTL after keepalive for lease " << lease_id;
@@ -338,7 +336,6 @@ ErrorCode EtcdService::unwatch_key(const std::string& key) {
     return ErrorCode::OK;
 }
 
-// Service discovery helpers
 ErrorCode EtcdService::register_service(const std::string& service_name,
                                       const std::string& service_id,
                                       const std::string& endpoint,
@@ -366,7 +363,6 @@ ErrorCode EtcdService::discover_service(const std::string& service_name,
     
     service_ids.clear();
     for (const auto& key : keys) {
-        // Extract service ID from key
         if (key.size() > prefix.size()) {
             service_ids.push_back(key.substr(prefix.size()));
         }
@@ -380,7 +376,6 @@ ErrorCode EtcdService::unregister_service(const std::string& service_name, const
     return del(key);
 }
 
-// Leader election helpers
 ErrorCode EtcdService::campaign_leader(const std::string& election_name,
                                      const std::string& candidate_id,
                                      int64_t ttl_seconds,
@@ -409,7 +404,6 @@ std::string EtcdService::make_leader_key(const std::string& election_name) const
 }
 
 ErrorCode EtcdService::refresh_lease(int64_t ttl_seconds, EtcdLeaseId& new_lease_id) {
-    // Grant a fresh lease to replace the old one
     return grant_lease(ttl_seconds, new_lease_id);
 }
 

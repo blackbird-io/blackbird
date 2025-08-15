@@ -91,11 +91,9 @@ public:
                      const std::unordered_map<MemoryPoolId, MemoryPool>& pools) const override;
 
 private:
-    // Pool allocators by pool_id (created on-demand)
     mutable std::shared_mutex pools_mutex_;
     std::unordered_map<MemoryPoolId, std::unique_ptr<PoolAllocator>> pool_allocators_;
     
-    // Object key -> allocated ranges for cleanup
     mutable std::shared_mutex allocations_mutex_;
     struct ObjectAllocation {
         std::vector<std::pair<MemoryPoolId, Range>> ranges;
@@ -103,7 +101,6 @@ private:
     };
     std::unordered_map<ObjectKey, ObjectAllocation> object_allocations_;
     
-    // Strategy implementation
     Result<AllocationResult>
     allocate_with_striping(const AllocationRequest& request,
                           const std::vector<MemoryPoolId>& candidate_pools,
@@ -124,7 +121,6 @@ private:
     
     void rollback_allocation(const std::vector<std::pair<MemoryPoolId, Range>>& ranges);
     
-    // Conversion helpers
     CopyPlacement create_copy_placement(uint32_t copy_index,
                                        const std::vector<std::pair<MemoryPoolId, Range>>& ranges,
                                        const std::unordered_map<MemoryPoolId, MemoryPool>& pools) const;
