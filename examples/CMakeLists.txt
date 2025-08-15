@@ -1,41 +1,56 @@
-add_executable(keystone_example keystone_example.cpp)
-target_link_libraries(keystone_example blackbird)
+# Examples directory for Blackbird
 
-target_compile_definitions(keystone_example PRIVATE GLOG_NO_ABBREVIATED_SEVERITIES)
+# Find required packages
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBURING REQUIRED liburing)
+find_package(glog REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(YAMLCPP REQUIRED yaml-cpp)
 
-set_target_properties(keystone_example PROPERTIES
-    CXX_STANDARD 20
-    CXX_STANDARD_REQUIRED ON
+# Benchmark disk backends example
+add_executable(benchmark_disk_backends
+    benchmark_disk_backends.cpp
 )
 
-add_executable(simple_client_test simple_client_test.cpp)
-target_link_libraries(simple_client_test blackbird)
-
-target_compile_definitions(simple_client_test PRIVATE GLOG_NO_ABBREVIATED_SEVERITIES)
-
-set_target_properties(simple_client_test PROPERTIES
-    CXX_STANDARD 20
-    CXX_STANDARD_REQUIRED ON
+target_link_libraries(benchmark_disk_backends
+    blackbird
+    ${LIBURING_LIBRARIES}
+    glog::glog
+    ${YAMLCPP_LIBRARIES}
+    pthread
 )
 
-add_executable(worker_example worker_example.cpp)
-target_link_libraries(worker_example blackbird)
-
-target_compile_definitions(worker_example PRIVATE GLOG_NO_ABBREVIATED_SEVERITIES)
-
-set_target_properties(worker_example PROPERTIES
-    CXX_STANDARD 20
-    CXX_STANDARD_REQUIRED ON
+target_include_directories(benchmark_disk_backends PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${LIBURING_INCLUDE_DIRS}
+    ${YAMLCPP_INCLUDE_DIRS}
 )
 
-add_executable(ucx_client ../clients/ucx_client.cpp)
+target_compile_options(benchmark_disk_backends PRIVATE
+    ${LIBURING_CFLAGS_OTHER}
+    ${YAMLCPP_CFLAGS_OTHER}
+)
 
-target_link_libraries(ucx_client PRIVATE blackbird)
+# Test disk allocation example
+add_executable(test_disk_allocation
+    test_disk_allocation.cpp
+)
 
-add_executable(benchmark_client ../clients/benchmark_client.cpp)
+target_link_libraries(test_disk_allocation
+    blackbird
+    ${LIBURING_LIBRARIES}
+    glog::glog
+    ${YAMLCPP_LIBRARIES}
+    pthread
+)
 
-target_link_libraries(benchmark_client PRIVATE blackbird)
+target_include_directories(test_disk_allocation PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${LIBURING_INCLUDE_DIRS}
+    ${YAMLCPP_INCLUDE_DIRS}
+)
 
-install(TARGETS keystone_example simple_client_test worker_example ucx_client benchmark_client
-    RUNTIME DESTINATION bin
-) 
+target_compile_options(test_disk_allocation PRIVATE
+    ${LIBURING_CFLAGS_OTHER}
+    ${YAMLCPP_CFLAGS_OTHER}
+)
