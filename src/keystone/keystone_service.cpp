@@ -252,6 +252,15 @@ ErrorCode KeystoneService::put_cancel(const ObjectKey& key) {
         return ErrorCode::OBJECT_NOT_FOUND;
     }
     
+    // Free any provisional reservations made for this object via allocator
+    if (allocator_) {
+        auto free_result = allocator_->free_object(key);
+        if (free_result != ErrorCode::OK) {
+            LOG(WARNING) << "Failed to free memory during cancel for object " << key
+                         << ", error=" << static_cast<int>(free_result);
+        }
+    }
+    
     objects_.erase(it);
     
     LOG(INFO) << "Cancelled put operation for key: " << key;
