@@ -3,12 +3,18 @@
 #include <glog/logging.h>
 #include <algorithm>
 #include <nlohmann/json.hpp>
+#include "blackbird/allocation/allocator_interface.h"
 
 namespace blackbird {
 
 KeystoneService::KeystoneService(const KeystoneConfig& config) 
     : config_(config) {
     LOG(INFO) << "Creating Keystone service with cluster_id: " << config_.cluster_id;
+    
+    // Initialize allocator with range-based strategy
+    auto allocator = allocation::AllocatorFactory::create(allocation::AllocatorFactory::Strategy::RANGE_BASED);
+    allocator_ = std::make_unique<allocation::KeystoneAllocatorAdapter>(std::move(allocator));
+    LOG(INFO) << "Initialized range-based memory allocator";
 }
 
 KeystoneService::~KeystoneService() {
@@ -102,7 +108,6 @@ ErrorCode KeystoneService::remove_worker(const std::string& worker_id) {
         std::unique_lock<std::shared_mutex> lock(worker_registry_mutex_);
         auto worker_it = workers_.find(worker_id);
         if (worker_it != workers_.end()) {
-            // Remove all memory pools owned by this worker
             for (const auto& [memory_pool_id, memory_pool] : worker_it->second.memory_pools) {
                 std::unique_lock<std::shared_mutex> seg_lock(memory_pools_mutex_);
                 memory_pools_.erase(memory_pool_id);
@@ -111,7 +116,6 @@ ErrorCode KeystoneService::remove_worker(const std::string& worker_id) {
         }
     }
     
-    // Remove heartbeat tracking
     {
         std::unique_lock<std::shared_mutex> heartbeat_lock(heartbeat_mutex_);
         worker_heartbeats_.erase(worker_id);
@@ -181,7 +185,6 @@ Result<std::vector<CopyPlacement>> KeystoneService::get_workers(const ObjectKey&
         return ErrorCode::OBJECT_NOT_FOUND;
     }
     
-    // Update last access time
     const_cast<ObjectInfo&>(it->second).touch();
     
     return it->second.copies;
@@ -192,7 +195,6 @@ Result<std::vector<CopyPlacement>> KeystoneService::put_start(const ObjectKey& k
                                                          const WorkerConfig& config) {
     std::unique_lock<std::shared_mutex> lock(objects_mutex_);
     
-    // Check if object already exists
     auto it = objects_.find(key);
     std::cout<< "Printing all objects: "<<std::endl;
     for (const auto& [key, object] : objects_) {
@@ -216,7 +218,6 @@ Result<std::vector<CopyPlacement>> KeystoneService::put_start(const ObjectKey& k
     object_info.last_accessed = object_info.created;
     object_info.config = config;
     
-    // Store a copy of placements in the object, but return the local vector
     object_info.copies = copies;
     
     objects_[key] = std::move(object_info);
@@ -236,7 +237,6 @@ ErrorCode KeystoneService::put_complete(const ObjectKey& key) {
         return ErrorCode::OBJECT_NOT_FOUND;
     }
     
-    // Mark operation as complete - using YLT struct-based approach
     LOG(INFO) << "Completed put operation for key: " << key;
     
     increment_view_version();
@@ -263,6 +263,14 @@ ErrorCode KeystoneService::remove_object(const ObjectKey& key) {
     auto it = objects_.find(key);
     if (it == objects_.end()) {
         return ErrorCode::OBJECT_NOT_FOUND;
+    }
+    
+    // Free allocated memory through allocator
+    if (allocator_) {
+        auto free_result = allocator_->free_object(key);
+        if (free_result != ErrorCode::OK) {
+            LOG(WARNING) << "Failed to free memory for object " << key;
+        }
     }
     
     objects_.erase(it);
@@ -342,11 +350,9 @@ std::vector<ErrorCode> KeystoneService::batch_put_cancel(const std::vector<Objec
     return results;
 }
 
-// Metrics and status
 Result<ClusterStats> KeystoneService::get_cluster_stats() const {
     ClusterStats stats;
     
-    // Memory Pool statistics
     {
         std::shared_lock<std::shared_mutex> lock(memory_pools_mutex_);
         stats.total_memory_pools = memory_pools_.size();
@@ -357,13 +363,11 @@ Result<ClusterStats> KeystoneService::get_cluster_stats() const {
         }
     }
     
-    // Object statistics
     {
         std::shared_lock<std::shared_mutex> lock(objects_mutex_);
         stats.total_objects = objects_.size();
     }
     
-    // Calculate utilization
     if (stats.total_capacity > 0) {
         stats.avg_utilization = static_cast<double>(stats.used_capacity) / stats.total_capacity;
     }
@@ -371,10 +375,9 @@ Result<ClusterStats> KeystoneService::get_cluster_stats() const {
     return stats;
 }
 
-// Private methods
 ErrorCode KeystoneService::setup_etcd_integration() {
     if (config_.etcd_endpoints.empty()) {
-        return ErrorCode::OK;  // No etcd configured
+        return ErrorCode::OK;  
     }
     
     etcd_ = std::make_unique<EtcdService>(config_.etcd_endpoints);
@@ -384,14 +387,12 @@ ErrorCode KeystoneService::setup_etcd_integration() {
         return err;
     }
     
-    // Create consistent service ID for this instance
     if (config_.service_id.empty()) {
         service_id_ = "keystone-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     } else {
         service_id_ = config_.service_id;
     }
     
-    // Register keystone service with etcd using TTL (no explicit lease management)
     std::string key = "/blackbird/services/blackbird-keystone/" + service_id_;
     err = etcd_->put_with_ttl(key, config_.listen_address, config_.service_registration_ttl_sec);
     if (err != ErrorCode::OK) {
@@ -412,12 +413,20 @@ void KeystoneService::run_garbage_collection() {
         if (!running_.load()) break;
         
         try {
-            // Clean up expired objects
             std::unique_lock<std::shared_mutex> lock(objects_mutex_);
             auto it = objects_.begin();
             while (it != objects_.end()) {
                 if (it->second.is_expired()) {
                     LOG(INFO) << "GC: Removing expired object: " << it->first;
+                    
+                    // Free allocated memory through allocator
+                    if (allocator_) {
+                        auto free_result = allocator_->free_object(it->first);
+                        if (free_result != ErrorCode::OK) {
+                            LOG(WARNING) << "Failed to free memory for object " << it->first;
+                        }
+                    }
+                    
                     it = objects_.erase(it);
                 } else {
                     ++it;
@@ -440,10 +449,8 @@ void KeystoneService::run_health_checks() {
         if (!running_.load()) break;
         
         try {
-            // Clean up stale workers that stopped sending heartbeats
             cleanup_stale_workers();
             
-            // Check storage utilization and evict objects if above high watermark
             evict_objects_if_needed();
         } catch (const std::exception& e) {
             LOG(ERROR) << "Exception in health checks: " << e.what();
@@ -462,7 +469,6 @@ void KeystoneService::run_etcd_keepalive() {
         if (!running_.load()) break;
         
         if (etcd_ && !service_id_.empty()) {
-            // Refresh service registration with TTL (no explicit lease management)
             std::string key = "/blackbird/services/blackbird-keystone/" + service_id_;
             auto err = etcd_->put_with_ttl(key, config_.listen_address, config_.service_registration_ttl_sec);
             if (err != ErrorCode::OK) {
@@ -479,30 +485,33 @@ void KeystoneService::run_etcd_keepalive() {
 ErrorCode KeystoneService::allocate_data_copies(const ObjectKey& key, size_t data_size,
                                                const WorkerConfig& config,
                                                std::vector<CopyPlacement>& copies) {
+    LOG(INFO) << "Allocating data copies for key: " << key << " size: " << data_size;
     copies.clear();
     
-    size_t replication_factor = config.replication_factor;
-    size_t max_workers_per_copy = config.max_workers_per_copy;
-    std::cout<< "DEBUG: Replication factor: " << replication_factor <<std::endl;
-    std::cout<< "DEBUG: Max workers per copy: " << max_workers_per_copy <<std::endl;
-    std::cout<< "DEBUG: Checking memory pools for allocation. Total pools: " << memory_pools_.size() <<std::endl;
-    for (size_t copy_id = 0; copy_id < replication_factor; ++copy_id) {
-        std::cout<< "DEBUG: Allocating copy: " << copy_id <<std::endl;
-        CopyPlacement copy_placement;
-        copy_placement.copy_index = copy_id;
-        
-        std::vector<ShardPlacement> shards_for_copy;
-        auto err = allocate_shards_for_copy(key, data_size, copy_id, max_workers_per_copy, shards_for_copy);
-        if (err != ErrorCode::OK) {
-            return err;
-        }
-        
-        // Add shards to the copy using struct field assignment
-        copy_placement.shards = std::move(shards_for_copy);
-        
-        copies.push_back(std::move(copy_placement));
-        std::cout<< "DEBUG: Copy: " << copy_placement.copy_index << " " << copy_placement.shards.size() <<std::endl;
+    if (!allocator_) {
+        LOG(ERROR) << "Allocator not initialized";
+        return ErrorCode::INTERNAL_ERROR;
     }
+    
+    // Get current memory pools under shared lock
+    std::shared_lock<std::shared_mutex> pools_lock(memory_pools_mutex_);
+    std::unordered_map<MemoryPoolId, MemoryPool> current_pools = memory_pools_;
+    pools_lock.unlock();
+    
+    if (current_pools.empty()) {
+        LOG(WARNING) << "No memory pools available for allocation";
+        return ErrorCode::MEMORY_POOL_NOT_FOUND;
+    }
+    
+    // Use the new allocator
+    auto result = allocator_->allocate_data_copies(key, data_size, config, current_pools);
+    if (!result) {
+        LOG(ERROR) << "Allocation failed for key " << key << ": " << static_cast<int>(result.error());
+        return result.error();
+    }
+    
+    copies = std::move(*result);
+    LOG(INFO) << "Successfully allocated " << copies.size() << " copies for key " << key;
     
     return ErrorCode::OK;
 }

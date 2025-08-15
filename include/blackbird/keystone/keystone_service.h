@@ -11,6 +11,7 @@
 
 #include "blackbird/common/types.h"
 #include "blackbird/etcd/etcd_service.h"
+#include "blackbird/allocation/keystone_allocator_adapter.h"
 
 namespace blackbird {
 
@@ -268,6 +269,9 @@ private:
     
     // Service registration info
     std::string service_id_;
+    
+    // Memory allocation management
+    std::unique_ptr<allocation::KeystoneAllocatorAdapter> allocator_;
     
     // Worker registry tracking from ETCD
     mutable std::shared_mutex worker_registry_mutex_;

@@ -10,6 +10,8 @@ set(BLACKBIRD_SOURCES
     transport/ucx_engine.cpp
     common/error/error_codes.cpp
     common/types.cpp
+    allocation/range_allocator.cpp
+    allocation/keystone_allocator_adapter.cpp
 )
 
 # Build the main blackbird library
