@@ -119,9 +119,8 @@ class AllocatorFactory {
 public:
     enum class Strategy {
         RANGE_BASED,        // Range-based allocator with best-fit
-        BUDDY_SYSTEM,       // Power-of-2 buddy allocator (future)
-        SLAB_ALLOCATOR,     // Fixed-size slab allocator (future)
-        HYBRID              // Combines multiple strategies (future)
+        SLAB_ALLOCATOR,     // Fixed-size slab allocator
+        HYBRID              // Combines multiple strategies
     };
     
     static std::unique_ptr<IAllocator> create(Strategy strategy);

@@ -2,6 +2,7 @@
 #include <glog/logging.h>
 #include <algorithm>
 #include <numeric>
+#include <stdexcept>
 
 namespace blackbird::allocation {
 
@@ -10,17 +11,27 @@ namespace blackbird::allocation {
 // Todo: arnavb fix the parsing, more strict error handling/crashes, seems overkill a bit, revisit logic in future
 PoolAllocator::PoolAllocator(const MemoryPool& pool) 
     : pool_id_(pool.id)
-    , storage_class_(StorageClass::RAM_CPU)  // TODO: Get from pool
+    , storage_class_(pool.storage_class)
     , node_id_(pool.node_id)
-    , base_addr_(pool.base_addr)
-    , ucx_rkey_(0)  // TODO: Parse from pool.ucx_rkey_hex
+    , base_addr_(pool.ucx_remote_addr)
+    , ucx_rkey_(0)
     , pool_size_(pool.size) {
+    if (pool.ucx_rkey_hex.empty()) {
+        throw std::invalid_argument("UCX rkey_hex is empty for pool: " + pool.id);
+    }
+    try {
+        ucx_rkey_ = static_cast<uint32_t>(std::stoul(pool.ucx_rkey_hex, nullptr, 16));
+    } catch (const std::exception& e) {
+        throw std::invalid_argument(std::string("Invalid UCX rkey_hex for pool ") + pool.id + 
+                                    ": " + pool.ucx_rkey_hex + " - " + e.what());
+    }
     
     // Initialize with single free range covering entire pool
     free_ranges_[0] = pool_size_;
     
     VLOG(1) << "Created PoolAllocator for " << pool_id_ 
-            << " size=" << pool_size_ << " bytes";
+            << " size=" << pool_size_ << " bytes"
+            << ", storage_class=" << static_cast<int>(storage_class_);
 }
 
 std::optional<Range> PoolAllocator::allocate(uint64_t size, bool prefer_best_fit) {
