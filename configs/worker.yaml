@@ -32,10 +32,10 @@ storage_pools:
     size_bytes: 2147483648  # 2GB
     
   # Add more pools as needed
-  # - pool_id: "nvme_pool_0" 
-  #   storage_class: "NVME"
-  #   size_bytes: 107374182400  # 100GB
-  #   mount_path: "/mnt/nvme0"
+  - pool_id: "nvme_pool_0" 
+    storage_class: "NVME"
+    size_bytes: 1073741824  # 1GB (reduced for testing)
+    mount_path: "/tmp/blackbird_nvme"
   #
   # - pool_id: "gpu_pool_0"
   #   storage_class: "RAM_GPU" 

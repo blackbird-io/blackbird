@@ -7,6 +7,8 @@ set(BLACKBIRD_SOURCES
     etcd/etcd_service.cpp
     worker/worker_service.cpp
     worker/storage/ram_backend.cpp
+worker/storage/disk_backend.cpp
+worker/storage/iouring_disk_backend.cpp
     transport/ucx_engine.cpp
     common/error/error_codes.cpp
     common/types.cpp
@@ -30,6 +32,7 @@ target_link_libraries(blackbird PUBLIC
     yalantinglibs::yalantinglibs
     yaml-cpp
     ${UCX_LIBRARIES}
+    ${LIBURING_LIBRARIES}
 )
 
 # Preprocessor definitions

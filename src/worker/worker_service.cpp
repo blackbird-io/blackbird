@@ -325,14 +325,12 @@ ErrorCode WorkerService::create_storage_pools_from_config() {
 				backend = create_storage_backend(pool_config.storage_class, pool_config.size_bytes);
 				break;
 				
-			// TODO: Add support for other storage classes
-			// case StorageClass::NVME:
-			// case StorageClass::SSD:
-			// case StorageClass::HDD:
-			//     backend = create_disk_storage_backend(pool_config.storage_class, 
-			//                                          pool_config.size_bytes, 
-			//                                          pool_config.mount_path);
-			//     break;
+			case StorageClass::NVME:
+			case StorageClass::SSD:
+			case StorageClass::HDD:
+				backend = create_storage_backend(pool_config.storage_class, pool_config.size_bytes, 
+				                               pool_config.mount_path);
+				break;
 				
 			default:
 				LOG(ERROR) << "Unsupported storage class: " << static_cast<int>(pool_config.storage_class);
