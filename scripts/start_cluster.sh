@@ -153,13 +153,13 @@ if check_port $KEYSTONE_PORT; then
 fi
 
 # Require keystone configuration file
-if [ ! -f "configs/keystone.yaml" ]; then
-    print_error "configs/keystone.yaml not found. Configuration file is required."
+if [ ! -f "../configs/keystone.yaml" ]; then
+    print_error "../configs/keystone.yaml not found. Configuration file is required."
     exit 1
 fi
 
-print_status "Using keystone configuration from configs/keystone.yaml"
-./examples/keystone_example configs/keystone.yaml \
+print_status "Using keystone configuration from ../configs/keystone.yaml"
+./examples/keystone_example ../configs/keystone.yaml \
     --etcd-endpoints "localhost:$ETCD_PORT" \
     --listen-address "0.0.0.0:$KEYSTONE_PORT" \
     --http-port "$KEYSTONE_HTTP_PORT" \
@@ -173,17 +173,15 @@ if ! wait_for_service $KEYSTONE_PORT "Keystone"; then
     exit 1
 fi
 
-# 3. Start Worker
 print_status "Starting Worker service..."
 
-# Require worker configuration file
-if [ ! -f "configs/worker.yaml" ]; then
-    print_error "configs/worker.yaml not found. Configuration file is required."
+if [ ! -f "../configs/worker.yaml" ]; then
+    print_error "../configs/worker.yaml not found. Configuration file is required."
     exit 1
 fi
 
 ./examples/worker_example \
-    --config "configs/worker.yaml" \
+    --config "../configs/worker.yaml" \
     --worker-id "localhost-worker-1" \
     --node-id "localhost" \
     > /tmp/blackbird-worker.log 2>&1 &
