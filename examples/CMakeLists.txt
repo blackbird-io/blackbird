@@ -54,3 +54,27 @@ target_compile_options(test_disk_allocation PRIVATE
     ${LIBURING_CFLAGS_OTHER}
     ${YAMLCPP_CFLAGS_OTHER}
 )
+
+# UCX transport benchmark
+add_executable(benchmark_ucx_transports
+    benchmark_ucx_transports.cpp
+)
+
+target_link_libraries(benchmark_ucx_transports
+    blackbird
+    ${LIBURING_LIBRARIES}
+    glog::glog
+    ${YAMLCPP_LIBRARIES}
+    pthread
+)
+
+target_include_directories(benchmark_ucx_transports PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${LIBURING_INCLUDE_DIRS}
+    ${YAMLCPP_INCLUDE_DIRS}
+)
+
+target_compile_options(benchmark_ucx_transports PRIVATE
+    ${LIBURING_CFLAGS_OTHER}
+    ${YAMLCPP_CFLAGS_OTHER}
+)
