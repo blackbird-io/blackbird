@@ -265,7 +265,6 @@ ErrorCode KeystoneService::remove_object(const ObjectKey& key) {
         return ErrorCode::OBJECT_NOT_FOUND;
     }
     
-    // Free allocated memory through allocator
     if (allocator_) {
         auto free_result = allocator_->free_object(key);
         if (free_result != ErrorCode::OK) {
