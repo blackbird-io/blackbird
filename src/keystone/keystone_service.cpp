@@ -66,7 +66,6 @@ ErrorCode KeystoneService::start() {
     if (etcd_) {
         load_existing_state_from_etcd();
         
-        // Watch workers, memory pools, and heartbeats for worker lifecycle management
         setup_watcher_with_error_handling("workers", [this]() { watch_worker_registry_namespace(); });
         setup_watcher_with_error_handling("memory_pools", [this]() { watch_memory_pools_namespace(); });
         setup_watcher_with_error_handling("heartbeats", [this]() { watch_heartbeat_namespace(); });
@@ -413,6 +412,7 @@ ErrorCode KeystoneService::setup_etcd_integration() {
     return ErrorCode::OK;
 }
 
+// arnavb: todo make this push based instead of threaded polling for efficiency and instant removal
 void KeystoneService::run_garbage_collection() {
     LOG(INFO) << "Starting garbage collection thread";
     
@@ -426,7 +426,7 @@ void KeystoneService::run_garbage_collection() {
             auto it = objects_.begin();
             while (it != objects_.end()) {
                 if (it->second.is_expired()) {
-                    LOG(INFO) << "GC: Removing expired object: " << it->first;
+                    LOG(INFO) << "Removing expired object: " << it->first;
                     
                     // Free allocated memory through allocator
                     if (allocator_) {
@@ -597,7 +597,7 @@ void KeystoneService::evict_objects_if_needed() {
         VLOG(2) << "Storage utilization (" << (stats.avg_utilization * 100.0) 
                 << "%) below high watermark (" << (config_.high_watermark * 100.0) 
                 << "%), no eviction needed";
-        return;  // No eviction needed
+        return; 
     }
     
     LOG(INFO) << "Storage utilization (" << (stats.avg_utilization * 100.0) 
@@ -610,7 +610,7 @@ void KeystoneService::evict_objects_if_needed() {
         return;
     }
     
-    // Build a list of candidates for eviction (non-soft-pinned objects)
+    // candidates for eviction (non-soft-pinned objects)
     std::vector<std::pair<std::chrono::system_clock::time_point, ObjectKey>> candidates;
     for (const auto& [key, object_info] : objects_) {
         // Only evict objects that are not soft pinned
@@ -629,7 +629,7 @@ void KeystoneService::evict_objects_if_needed() {
     
     // Evict a percentage of eligible objects to bring utilization down
     size_t eviction_count = static_cast<size_t>(candidates.size() * config_.eviction_ratio);
-    eviction_count = std::max(eviction_count, static_cast<size_t>(1)); // Evict at least 1 object
+    eviction_count = std::max(eviction_count, static_cast<size_t>(1));
     
     size_t evicted = 0;
     for (size_t i = 0; i < eviction_count && i < candidates.size(); ++i) {
@@ -676,9 +676,9 @@ void KeystoneService::upsert_worker_memory_pool_from_json(const std::string& key
         if (memory_pool_pos == std::string::npos) return;
         
         std::string worker_id = suffix.substr(0, memory_pool_pos);
+        // todo: this is hacky and can break if key-length changes in future
         std::string memory_pool_id = suffix.substr(memory_pool_pos + 14); // 14 = strlen("/memory_pools/")
         
-        // Parse memory pool metadata
         MemoryPool memory_pool;
         memory_pool.id = doc.value("id", memory_pool_id);
         memory_pool.node_id = doc.value("node_id", "");
@@ -700,14 +700,12 @@ void KeystoneService::upsert_worker_memory_pool_from_json(const std::string& key
             memory_pool.ucx_rkey_hex = doc.value("ucx_rkey_hex", std::string{});
         }
         
-        // Update worker's memory pool list
         std::unique_lock<std::shared_mutex> worker_lock(worker_registry_mutex_);
         auto worker_it = workers_.find(worker_id);
         if (worker_it != workers_.end()) {
             worker_it->second.memory_pools[memory_pool_id] = memory_pool;
         }
         
-        // Also update the global memory pools map for compatibility
         std::unique_lock<std::shared_mutex> pool_lock(memory_pools_mutex_);
         memory_pools_[memory_pool.id] = memory_pool;
         
@@ -751,7 +749,6 @@ void KeystoneService::remove_worker_memory_pool_by_key(const std::string& key) {
     LOG(INFO) << "Removed memory pool: " << memory_pool_id << " from worker " << worker_id;
 }
 
-// === Worker registry watchers ===
 void KeystoneService::watch_worker_registry_namespace() {
     if (!etcd_) return;
     auto prefix = workers_prefix();
@@ -1023,7 +1020,6 @@ void KeystoneService::cleanup_dead_worker(const std::string& worker_id) {
         std::unique_lock<std::shared_mutex> worker_lock(worker_registry_mutex_);
         auto worker_it = workers_.find(worker_id);
         if (worker_it != workers_.end()) {
-            // Collect memory pool IDs before removing worker
             for (const auto& [memory_pool_id, memory_pool] : worker_it->second.memory_pools) {
                 memory_pool_ids_to_remove.push_back(memory_pool_id);
             }
