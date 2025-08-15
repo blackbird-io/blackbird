@@ -171,11 +171,11 @@ RangeAllocator::allocate(const AllocationRequest& request,
     if (candidate_pools.empty()) {
         LOG(WARNING) << "No suitable pools found for allocation request " 
                      << request.object_key;
-        return ErrorCode::MEMORY_POOL_NOT_FOUND;
+        return ErrorCode::INSUFFICIENT_SPACE;
     }
     
     if (request.enable_striping && candidate_pools.size() > 1) {
-        return allocate_with_striping(request, candidate_pools);
+        return allocate_with_striping(request, candidate_pools, pools);
     } else {
         return allocate_contiguous(request, candidate_pools);
     }
@@ -223,14 +223,12 @@ AllocatorStats RangeAllocator::get_stats(std::optional<StorageClass> storage_cla
         stats.bytes_per_class[pool_alloc->storage_class()] += free_bytes;
     }
     
-    // Calculate allocated bytes and object count
     for (const auto& [key, allocation] : object_allocations_) {
         stats.total_allocated_bytes += allocation.total_size;
         stats.total_shards += allocation.ranges.size();
         ++stats.total_objects;
     }
     
-    // Calculate overall fragmentation (weighted average)
     double total_free = stats.total_free_bytes;
     double weighted_frag = 0.0;
     
@@ -281,32 +279,40 @@ bool RangeAllocator::can_allocate(const AllocationRequest& request,
 
 Result<AllocationResult>
 RangeAllocator::allocate_with_striping(const AllocationRequest& request,
-                                      const std::vector<MemoryPoolId>& candidate_pools) {
+                                      const std::vector<MemoryPoolId>& candidate_pools,
+                                      const std::unordered_map<MemoryPoolId, MemoryPool>& pools) {
     size_t per_copy_size = request.data_size;
     size_t workers_per_copy = std::min(request.max_workers_per_copy, candidate_pools.size());
+    
+    // Adjust workers_per_copy if we need to use fewer to spread copies across different pools
+    if (request.replication_factor > 1 && candidate_pools.size() > workers_per_copy) {
+        // If we have more pools than workers_per_copy, we can spread copies better
+        // by using fewer workers per copy to allow more pool diversity across copies
+        size_t ideal_workers = candidate_pools.size() / request.replication_factor;
+        if (ideal_workers >= 1) {
+            workers_per_copy = std::min(workers_per_copy, ideal_workers);
+        }
+    }
     
     AllocationResult result{};
     result.copies.reserve(request.replication_factor);
     
-    // Track all ranges allocated across all copies to enable full rollback on failure
     std::vector<std::pair<MemoryPoolId, Range>> allocated_ranges;
     
-    // Allocate each copy
     for (size_t copy_idx = 0; copy_idx < request.replication_factor; ++copy_idx) {
         std::vector<std::pair<MemoryPoolId, Range>> copy_ranges;
         
         size_t shard_size = per_copy_size / workers_per_copy;
         size_t remainder = per_copy_size % workers_per_copy;
         
-        // Allocate shards across workers
         for (size_t worker_idx = 0; worker_idx < workers_per_copy; ++worker_idx) {
-            MemoryPoolId pool_id = candidate_pools[worker_idx % candidate_pools.size()];
+            size_t pool_idx = (copy_idx * workers_per_copy + worker_idx) % candidate_pools.size();
+            MemoryPoolId pool_id = candidate_pools[pool_idx];
             size_t current_shard_size = shard_size + (worker_idx < remainder ? 1 : 0);
             
             if (current_shard_size < request.min_shard_size && workers_per_copy > 1) {
-                // Shard too small, try to use fewer workers
                 workers_per_copy = std::max(1UL, per_copy_size / request.min_shard_size);
-                // Restart allocation with fewer workers is not supported in-place
+                // Shard too small
                 // Fail this attempt and rollback all allocated ranges
                 rollback_allocation(allocated_ranges);
                 return ErrorCode::INSUFFICIENT_SPACE;
@@ -329,10 +335,63 @@ RangeAllocator::allocate_with_striping(const AllocationRequest& request,
             allocated_ranges.emplace_back(pool_id, *range);
         }
         
-        // TODO: Create CopyPlacement from ranges
-        // This requires access to pools map for endpoint information
-        // For now, store the ranges and let caller convert
+        // Create CopyPlacement from ranges and pools information
+        CopyPlacement copy_placement;
+        copy_placement.copy_index = copy_idx;
+        copy_placement.shards.reserve(copy_ranges.size());
         
+        for (const auto& [pool_id, range] : copy_ranges) {
+            auto pool_it = pools.find(pool_id);
+            if (pool_it == pools.end()) {
+                rollback_allocation(allocated_ranges);
+                return ErrorCode::MEMORY_POOL_NOT_FOUND;
+            }
+            
+            const MemoryPool& pool = pool_it->second;
+            
+            // Parse UCX endpoint (host:port format)
+            UcxEndpoint endpoint;
+            auto colon_pos = pool.ucx_endpoint.find(':');
+            if (colon_pos != std::string::npos) {
+                endpoint.ip = pool.ucx_endpoint.substr(0, colon_pos);
+                endpoint.port = std::stoi(pool.ucx_endpoint.substr(colon_pos + 1));
+            } else {
+                rollback_allocation(allocated_ranges);
+                return ErrorCode::INVALID_PARAMETERS;
+            }
+            
+            // Parse UCX rkey from hex string
+            uint64_t rkey = 0;
+            if (!pool.ucx_rkey_hex.empty()) {
+                try {
+                    rkey = std::stoull(pool.ucx_rkey_hex, nullptr, 16);
+                } catch (const std::exception&) {
+                    rollback_allocation(allocated_ranges);
+                    return ErrorCode::INVALID_PARAMETERS;
+                }
+            }
+            
+            // Create memory location
+            MemoryLocation mem_location{
+                .remote_addr = pool.ucx_remote_addr + range.offset,
+                .rkey = static_cast<uint32_t>(rkey),
+                .size = range.length
+            };
+            
+            // Create shard placement
+            ShardPlacement shard{
+                .pool_id = pool_id,
+                .worker_id = pool.node_id,
+                .endpoint = endpoint,
+                .storage_class = pool.storage_class,
+                .length = range.length,
+                .location = mem_location
+            };
+            
+            copy_placement.shards.push_back(std::move(shard));
+        }
+        
+        result.copies.push_back(std::move(copy_placement));
         result.total_shards_created += copy_ranges.size();
     }
     
@@ -390,11 +449,13 @@ RangeAllocator::select_candidate_pools(const AllocationRequest& request,
     sort_by_available(fallback_all);
     
     auto ceil_div = [](size_t a, size_t b) { return (a + b - 1) / b; };
-    const size_t max_workers = std::min(request.max_workers_per_copy,
+    // For multi-replica allocations, we need more pools to enable spreading across replicas
+    const size_t total_workers_needed = request.max_workers_per_copy * request.replication_factor;
+    const size_t max_workers = std::min(total_workers_needed,
                                         preferred_all.size() + fallback_all.size());
     
-    for (size_t w = max_workers; w >= 1; --w) {
-        const size_t required_per_pool = ceil_div(request.data_size, w);
+    for (size_t w = max_workers; w >= request.max_workers_per_copy; --w) {
+        const size_t required_per_pool = ceil_div(request.data_size * request.replication_factor, w);
         std::vector<MemoryPoolId> selected;
         selected.reserve(w);
         
@@ -415,7 +476,7 @@ RangeAllocator::select_candidate_pools(const AllocationRequest& request,
         if (selected.size() == w) {
             return selected;
         }
-        if (w == 1) break;
+        if (w == request.max_workers_per_copy) break;
     }
     
     return {};

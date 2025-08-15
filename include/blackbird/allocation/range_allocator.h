@@ -11,8 +11,8 @@ namespace blackbird::allocation {
  * @brief Range representing a contiguous memory allocation
  */
 struct Range {
-    uint64_t offset;    // Offset from pool base address
-    uint64_t length;    // Size in bytes
+    uint64_t offset;   
+    uint64_t length;   
     
     Range(uint64_t off, uint64_t len) : offset(off), length(len) {}
     
@@ -37,22 +37,18 @@ class PoolAllocator {
 public:
     PoolAllocator(const MemoryPool& pool);
     
-    // Thread-safe allocation operations
     std::optional<Range> allocate(uint64_t size, bool prefer_best_fit = true);
     void free(const Range& range);
     
-    // Query operations
     size_t total_free() const;
     size_t largest_free_block() const;
     double fragmentation_ratio() const;
     bool can_allocate(uint64_t size) const;
     
-    // Pool metadata
     const MemoryPoolId& pool_id() const { return pool_id_; }
     StorageClass storage_class() const { return storage_class_; }
     const std::string& node_id() const { return node_id_; }
     
-    // Range conversion helpers
     MemoryLocation to_memory_location(const Range& range) const;
     
 private:
@@ -65,10 +61,8 @@ private:
     
     mutable std::mutex mutex_;
     
-    // Free ranges ordered by offset for efficient merging
     std::map<uint64_t, uint64_t> free_ranges_;  // offset -> length
     
-    // Helper methods
     std::map<uint64_t, uint64_t>::iterator find_best_fit(uint64_t size);
     std::map<uint64_t, uint64_t>::iterator find_first_fit(uint64_t size);
     std::map<uint64_t, uint64_t>::const_iterator find_first_fit(uint64_t size) const;
@@ -112,7 +106,8 @@ private:
     // Strategy implementation
     Result<AllocationResult>
     allocate_with_striping(const AllocationRequest& request,
-                          const std::vector<MemoryPoolId>& candidate_pools);
+                          const std::vector<MemoryPoolId>& candidate_pools,
+                          const std::unordered_map<MemoryPoolId, MemoryPool>& pools);
     
     Result<AllocationResult>
     allocate_contiguous(const AllocationRequest& request,
