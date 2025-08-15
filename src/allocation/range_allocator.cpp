@@ -164,7 +164,12 @@ RangeAllocator::allocate(const AllocationRequest& request,
                         const std::unordered_map<MemoryPoolId, MemoryPool>& pools) {
     
     for (const auto& [pool_id, pool] : pools) {
-        ensure_pool_allocator(pool);
+        auto result = ensure_pool_allocator(pool);
+        if (result != ErrorCode::OK) {
+            LOG(ERROR) << "Failed to create allocator for pool " << pool_id 
+                       << " in allocation request " << request.object_key;
+            return result;  // Fail fast on pool configuration errors
+        }
     }
     
     auto candidate_pools = select_candidate_pools(request, pools);
@@ -174,7 +179,7 @@ RangeAllocator::allocate(const AllocationRequest& request,
         return ErrorCode::INSUFFICIENT_SPACE;
     }
     
-    if (request.enable_striping && candidate_pools.size() > 1) {
+    if (request.enable_striping) {
         return allocate_with_striping(request, candidate_pools, pools);
     } else {
         return allocate_contiguous(request, candidate_pools);
@@ -454,7 +459,7 @@ RangeAllocator::select_candidate_pools(const AllocationRequest& request,
     const size_t max_workers = std::min(total_workers_needed,
                                         preferred_all.size() + fallback_all.size());
     
-    for (size_t w = max_workers; w >= request.max_workers_per_copy; --w) {
+    for (size_t w = max_workers; w >= 1; --w) {
         const size_t required_per_pool = ceil_div(request.data_size * request.replication_factor, w);
         std::vector<MemoryPoolId> selected;
         selected.reserve(w);
@@ -476,19 +481,28 @@ RangeAllocator::select_candidate_pools(const AllocationRequest& request,
         if (selected.size() == w) {
             return selected;
         }
-        if (w == request.max_workers_per_copy) break;
+        if (w == 1) break;
     }
     
     return {};
 }
 
-void RangeAllocator::ensure_pool_allocator(const MemoryPool& pool) {
+ErrorCode RangeAllocator::ensure_pool_allocator(const MemoryPool& pool) {
     std::unique_lock<std::shared_mutex> lock(pools_mutex_);
     
     if (pool_allocators_.find(pool.id) == pool_allocators_.end()) {
-        pool_allocators_[pool.id] = std::make_unique<PoolAllocator>(pool);
-        VLOG(1) << "Created allocator for pool " << pool.id;
+        try {
+            pool_allocators_[pool.id] = std::make_unique<PoolAllocator>(pool);
+            VLOG(1) << "Created allocator for pool " << pool.id;
+        } catch (const std::invalid_argument& e) {
+            LOG(ERROR) << "Failed to create pool allocator for " << pool.id << ": " << e.what();
+            return ErrorCode::INVALID_PARAMETERS;
+        } catch (const std::exception& e) {
+            LOG(ERROR) << "Unexpected error creating pool allocator for " << pool.id << ": " << e.what();
+            return ErrorCode::INTERNAL_ERROR;
+        }
     }
+    return ErrorCode::OK;
 }
 
 ErrorCode RangeAllocator::commit_allocation(const ObjectKey& object_key,

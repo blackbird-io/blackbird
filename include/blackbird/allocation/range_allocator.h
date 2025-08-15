@@ -117,7 +117,7 @@ private:
     select_candidate_pools(const AllocationRequest& request,
                           const std::unordered_map<MemoryPoolId, MemoryPool>& pools) const;
     
-    void ensure_pool_allocator(const MemoryPool& pool);
+    ErrorCode ensure_pool_allocator(const MemoryPool& pool);
     
     ErrorCode commit_allocation(const ObjectKey& object_key,
                                const std::vector<std::pair<MemoryPoolId, Range>>& ranges);
