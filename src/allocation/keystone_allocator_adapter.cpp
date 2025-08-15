@@ -19,10 +19,8 @@ KeystoneAllocatorAdapter::allocate_data_copies(const ObjectKey& key,
                                               const WorkerConfig& config,
                                               const std::unordered_map<MemoryPoolId, MemoryPool>& memory_pools) {
     
-    // Convert to allocator request
     auto request = to_allocation_request(key, data_size, config);
     
-    // Perform allocation
     auto result = allocator_->allocate(request, memory_pools);
     if (!result) {
         LOG(WARNING) << "Allocation failed for object " << key 
@@ -30,7 +28,6 @@ KeystoneAllocatorAdapter::allocate_data_copies(const ObjectKey& key,
         return tl::unexpected(result.error());
     }
     
-    // Convert result back to Keystone format
     auto copy_placements = to_copy_placements(*result, memory_pools);
     
     LOG(INFO) << "Successfully allocated " << copy_placements.size() 
@@ -79,16 +76,15 @@ bool KeystoneAllocatorAdapter::can_allocate_object(size_t data_size,
         .max_workers_per_copy = config.max_workers_per_copy,
         .preferred_classes = config.preferred_classes,
         .preferred_node = config.preferred_node,
-        .enable_locality_awareness = config.enable_soft_pin,
+        .enable_locality_awareness = config.enable_locality_awareness,
         .enable_striping = (config.max_workers_per_copy > 1),
-        .prefer_contiguous = false,  
-        .min_shard_size = 4096       
+        .prefer_contiguous = config.prefer_contiguous,
+        .min_shard_size = config.min_shard_size
     };
     
     return allocator_->can_allocate(request, memory_pools);
 }
 
-// Private Helper Methods
 AllocationRequest KeystoneAllocatorAdapter::to_allocation_request(const ObjectKey& key,
                                                                  size_t data_size,
                                                                  const WorkerConfig& config) const {    
@@ -99,10 +95,10 @@ AllocationRequest KeystoneAllocatorAdapter::to_allocation_request(const ObjectKe
         .max_workers_per_copy = config.max_workers_per_copy,
         .preferred_classes = config.preferred_classes,
         .preferred_node = config.preferred_node,
-        .enable_locality_awareness = config.enable_soft_pin, 
+        .enable_locality_awareness = config.enable_locality_awareness,
         .enable_striping = (config.max_workers_per_copy > 1),
-        .prefer_contiguous = false,  // Could be made configurable in future
-        .min_shard_size = 4096       // Could be made configurable in future
+        .prefer_contiguous = config.prefer_contiguous,
+        .min_shard_size = config.min_shard_size
     };
     
     return request;
@@ -154,7 +150,6 @@ ShardPlacement KeystoneAllocatorAdapter::create_shard_placement(const MemoryPool
     shard.endpoint.ip = host;
     shard.endpoint.port = port;
     
-    // Parse rkey from hex string - fail if invalid
     uint32_t rkey;
     try {
         rkey = static_cast<uint32_t>(std::stoul(pool.ucx_rkey_hex, nullptr, 16));
@@ -163,7 +158,6 @@ ShardPlacement KeystoneAllocatorAdapter::create_shard_placement(const MemoryPool
                                   " - " + e.what());
     }
     
-    // Create memory location
     MemoryLocation mem_loc{
         .remote_addr = pool.ucx_remote_addr + offset,
         .rkey = rkey,
@@ -175,9 +169,11 @@ ShardPlacement KeystoneAllocatorAdapter::create_shard_placement(const MemoryPool
 }
 
 StorageClass KeystoneAllocatorAdapter::get_pool_storage_class(const MemoryPool& pool) const {
-    // This method should not be called until MemoryPool has a storage_class field
-    // Failing fast prevents silent bugs from hardcoded assumptions
-    throw std::runtime_error("MemoryPool.storage_class field not implemented yet - cannot determine storage class for pool " + pool.id);
+    if (pool.storage_class == StorageClass::STORAGE_UNSPECIFIED) {
+        throw std::runtime_error("Pool " + pool.id + " has STORAGE_UNSPECIFIED - worker did not provide storage_class information");
+    }
+    
+    return pool.storage_class;
 }
 
 } // namespace blackbird::allocation

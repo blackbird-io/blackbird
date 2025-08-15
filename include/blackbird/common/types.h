@@ -442,13 +442,14 @@ struct MemoryPool {
 	uintptr_t base_addr{0}; // Base address of the memory pool
 	size_t size{0};         // Total size of the memory pool
 	size_t used{0};         // Currently used space
+	StorageClass storage_class{StorageClass::STORAGE_UNSPECIFIED}; // Storage type for this pool
 	UcxAddress ucx_address; // Legacy worker address (not used in sockaddr mode)
 	// UCX sockaddr mode fields (populated from worker advertisement)
 	std::string ucx_endpoint;     // host:port
 	uint64_t ucx_remote_addr{0};  // base remote address
 	std::string ucx_rkey_hex;     // packed rkey bytes as hex string
 	
-	NLOHMANN_DEFINE_TYPE_INTRUSIVE(MemoryPool, id, node_id, base_addr, size, used, ucx_address, ucx_endpoint, ucx_remote_addr, ucx_rkey_hex)
+	NLOHMANN_DEFINE_TYPE_INTRUSIVE(MemoryPool, id, node_id, base_addr, size, used, storage_class, ucx_address, ucx_endpoint, ucx_remote_addr, ucx_rkey_hex)
 	
 	double utilization() const noexcept {
 		return size > 0 ? static_cast<double>(used) / static_cast<double>(size) : 0.0;
@@ -461,6 +462,7 @@ struct MemoryPool {
 	friend std::ostream& operator<<(std::ostream& os, const MemoryPool& memory_pool) noexcept {
 		return os << "MemoryPool{id=" << memory_pool.id << ", node=" << memory_pool.node_id
 				  << ", size=" << memory_pool.size << ", used=" << memory_pool.used 
+				  << ", storage_class=" << static_cast<uint32_t>(memory_pool.storage_class)
 				  << ", available=" << memory_pool.available() << "}";
 	}
 };

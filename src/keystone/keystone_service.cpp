@@ -676,6 +676,13 @@ void KeystoneService::upsert_worker_memory_pool_from_json(const std::string& key
         memory_pool.size = doc.value("size", 0UL);
         memory_pool.used = doc.value("used", 0UL);
         
+        if (doc.contains("storage_class")) {
+            uint32_t storage_class_int = doc.value("storage_class", static_cast<uint32_t>(StorageClass::STORAGE_UNSPECIFIED));
+            memory_pool.storage_class = static_cast<StorageClass>(storage_class_int);
+        } else {
+            memory_pool.storage_class = StorageClass::STORAGE_UNSPECIFIED;
+        }
+        
         if (doc.contains("ucx_address")) {
             memory_pool.ucx_address = doc["ucx_address"].get<UcxAddress>();
         }
