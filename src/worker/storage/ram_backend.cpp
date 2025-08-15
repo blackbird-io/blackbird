@@ -57,7 +57,6 @@ Result<ReservationToken> RamBackend::reserve_shard(uint64_t size, const std::str
         return ErrorCode::OUT_OF_MEMORY;
     }
     
-    // Find a free offset
     uint64_t offset = find_free_offset(size);
     if (offset == UINT64_MAX) {
         LOG(WARNING) << "Cannot find contiguous space for " << size << " bytes";
@@ -70,7 +69,7 @@ Result<ReservationToken> RamBackend::reserve_shard(uint64_t size, const std::str
     
     ReservationToken token;
     token.token_id = token_id;
-    token.pool_id = ""; // Will be set by caller
+    token.pool_id = ""; 
     token.remote_addr = base_address_ + offset;
     token.rkey = rkey_;
     token.size = size;

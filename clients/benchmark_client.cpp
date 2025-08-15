@@ -91,7 +91,7 @@ int main(int argc, char** argv) {
 	std::string etcd_endpoints = "localhost:2379";
 	std::string cluster_id = DEFAULT_CLUSTER_ID;
 	std::string key_prefix = "benchmark";
-	size_t data_size = 1024 * 1024 * 1024; // 1GB default
+	size_t data_size = 1024 * 1024 * 1024; 
 	size_t iterations = 10;
 	size_t replicas = 1;
 	size_t max_workers = 1;

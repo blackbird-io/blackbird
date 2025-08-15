@@ -193,24 +193,33 @@ ErrorCode WorkerService::initialize() {
 		LOG(INFO) << "UCX listener started at " << config_.ucx_endpoint;
 	}
 	
-	// Register each pool's memory with UCX
+	// Register each pool's memory with UCX (only for memory-based backends)
 	{
 		std::shared_lock<std::shared_mutex> lock(storage_pools_mutex_);
 		for (const auto& [pool_id, backend] : storage_pools_) {
-			void* base_ptr = reinterpret_cast<void*>(backend->get_base_address());
-			size_t size = backend->get_total_capacity();
-			if (base_ptr == nullptr || size == 0) {
-				LOG(ERROR) << "Pool " << pool_id << " has invalid base/size for UCX registration";
-				return ErrorCode::INVALID_STATE;
+			StorageClass storage_class = backend->get_storage_class();
+			
+			if (storage_class == StorageClass::RAM_CPU || storage_class == StorageClass::RAM_GPU) {
+				void* base_ptr = reinterpret_cast<void*>(backend->get_base_address());
+				size_t size = backend->get_total_capacity();
+				if (base_ptr == nullptr || size == 0) {
+					LOG(ERROR) << "Pool " << pool_id << " has invalid base/size for UCX registration";
+					return ErrorCode::INVALID_STATE;
+				}
+				UcxRegInfo reg;
+				if (!ucx_engine_->register_memory(base_ptr, size, reg)) {
+					LOG(ERROR) << "UCX memory registration failed for pool " << pool_id;
+					return ErrorCode::INTERNAL_ERROR;
+				}
+				pool_ucx_reg_[pool_id] = reg;
+				LOG(INFO) << "UCX registered memory pool " << pool_id << ", remote_addr=0x" 
+					      << std::hex << reg.remote_addr << std::dec;
+			} else {
+				// Disk-based storage: UCX registration not applicable
+				// Clients will use standard network protocols for disk I/O
+				LOG(INFO) << "Skipping UCX registration for disk-based pool " << pool_id 
+				          << " (storage_class=" << static_cast<int>(storage_class) << ")";
 			}
-			UcxRegInfo reg;
-			if (!ucx_engine_->register_memory(base_ptr, size, reg)) {
-				LOG(ERROR) << "UCX memory registration failed for pool " << pool_id;
-				return ErrorCode::INTERNAL_ERROR;
-			}
-			pool_ucx_reg_[pool_id] = reg;
-			LOG(INFO) << "UCX registered pool " << pool_id << ", remote_addr=0x" 
-				      << std::hex << reg.remote_addr << std::dec;
 		}
 	}
 	

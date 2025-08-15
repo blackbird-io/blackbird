@@ -78,3 +78,99 @@ target_compile_options(benchmark_ucx_transports PRIVATE
     ${LIBURING_CFLAGS_OTHER}
     ${YAMLCPP_CFLAGS_OTHER}
 )
+
+
+add_executable(simple_keystone_client
+    simple_keystone_client.cpp
+)
+
+target_link_libraries(simple_keystone_client
+    blackbird
+    ${LIBURING_LIBRARIES}
+    glog::glog
+    ${YAMLCPP_LIBRARIES}
+    pthread
+)
+
+target_include_directories(simple_keystone_client PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${LIBURING_INCLUDE_DIRS}
+    ${YAMLCPP_INCLUDE_DIRS}
+)
+
+target_compile_options(simple_keystone_client PRIVATE
+    ${LIBURING_CFLAGS_OTHER}
+    ${YAMLCPP_CFLAGS_OTHER}
+)
+
+# Worker example
+add_executable(worker_example
+    worker_example.cpp
+)
+
+target_link_libraries(worker_example
+    blackbird
+    ${LIBURING_LIBRARIES}
+    glog::glog
+    ${YAMLCPP_LIBRARIES}
+    pthread
+)
+
+target_include_directories(worker_example PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${LIBURING_INCLUDE_DIRS}
+    ${YAMLCPP_INCLUDE_DIRS}
+)
+
+target_compile_options(worker_example PRIVATE
+    ${LIBURING_CFLAGS_OTHER}
+    ${YAMLCPP_CFLAGS_OTHER}
+)
+
+# Keystone example
+add_executable(keystone_example
+    keystone_example.cpp
+)
+
+target_link_libraries(keystone_example
+    blackbird
+    ${LIBURING_LIBRARIES}
+    glog::glog
+    ${YAMLCPP_LIBRARIES}
+    pthread
+)
+
+target_include_directories(keystone_example PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${LIBURING_INCLUDE_DIRS}
+    ${YAMLCPP_INCLUDE_DIRS}
+)
+
+target_compile_options(keystone_example PRIVATE
+    ${LIBURING_CFLAGS_OTHER}
+    ${YAMLCPP_CFLAGS_OTHER}
+)
+
+# Simple client test
+add_executable(simple_client_test
+    simple_client_test.cpp
+)
+
+target_link_libraries(simple_client_test
+    blackbird
+    ${LIBURING_LIBRARIES}
+    glog::glog
+    ${YAMLCPP_LIBRARIES}
+    pthread
+)
+
+target_include_directories(simple_client_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${LIBURING_INCLUDE_DIRS}
+    ${YAMLCPP_INCLUDE_DIRS}
+)
+
+target_compile_options(simple_client_test PRIVATE
+    ${LIBURING_CFLAGS_OTHER}
+    ${YAMLCPP_CFLAGS_OTHER}
+)

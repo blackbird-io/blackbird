@@ -22,10 +22,8 @@ IoUringDiskBackend::IoUringDiskBackend(uint64_t capacity, StorageClass storage_c
         throw std::invalid_argument("IoUringDiskBackend only supports NVME, SSD, or HDD storage classes");
     }
     
-    // Create storage directory path
     storage_dir_ = mount_path_ / "blackbird_storage";
     
-    // Generate cryptographically secure random base address and rkey
     std::random_device rd;
     std::mt19937_64 secure_gen(rd());
     std::uniform_int_distribution<uint64_t> addr_dist;
@@ -34,7 +32,6 @@ IoUringDiskBackend::IoUringDiskBackend(uint64_t capacity, StorageClass storage_c
     base_address_hash_ = addr_dist(secure_gen);
     rkey_ = rkey_dist(secure_gen);
     
-    // Ensure non-zero values (avoid potential NULL pointer issues)
     if (base_address_hash_ == 0) base_address_hash_ = 1;
     if (rkey_ == 0) rkey_ = 1;
     
@@ -80,7 +77,6 @@ Result<ReservationToken> IoUringDiskBackend::reserve_shard(uint64_t size, const 
     
     std::lock_guard<std::mutex> lock(mutex_);
     
-    // Check if we have enough free space (avoid deadlock by not calling methods that lock)
     uint64_t available = capacity_ - used_capacity_;
     if (size > available) {
         LOG(WARNING) << "Not enough free space: requested " << size 
@@ -88,12 +84,10 @@ Result<ReservationToken> IoUringDiskBackend::reserve_shard(uint64_t size, const 
         return ErrorCode::OUT_OF_MEMORY;
     }
     
-    // Generate unique filenames
     std::string file_path = generate_shard_filename();
     std::string token_id = generate_token_id();
     auto expires_at = std::chrono::system_clock::now() + std::chrono::minutes(10); // 10 minute expiry
     
-    // Encode file path as remote address
     uint64_t remote_addr = encode_remote_addr(file_path, 0);
     
     ReservationToken token;
@@ -104,7 +98,6 @@ Result<ReservationToken> IoUringDiskBackend::reserve_shard(uint64_t size, const 
     token.size = size;
     token.expires_at = expires_at;
     
-    // Track the reservation
     IoUringShard shard;
     shard.file_path = file_path;
     shard.file_offset = 0; // Start of file
