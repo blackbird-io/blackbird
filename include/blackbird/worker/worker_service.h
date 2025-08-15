@@ -20,29 +20,28 @@ namespace blackbird {
  */
 struct WorkerServiceConfig {
 	std::string cluster_id{DEFAULT_CLUSTER_ID};
-	std::string worker_id;                      // Unique worker identifier
-	std::string node_id;                        // Physical node identifier
-	std::string etcd_endpoints;                 // Comma-separated etcd endpoints
-	std::string rpc_endpoint{"0.0.0.0:0"};     // Control RPC endpoint (auto-assign port if 0)
-	std::string ucx_endpoint;                   // UCX endpoint for RDMA (host:port for sockaddr mode)
-	std::vector<std::string> interconnects{"tcp"}; // ["tcp", "infiniband", "nvlink"]
+	std::string worker_id;                      
+	std::string node_id;                        
+	std::string etcd_endpoints;                 
+	std::string rpc_endpoint; // Must be configured via YAML     
+	std::string ucx_endpoint;                  
+	std::vector<std::string> interconnects; // Must be configured via YAML: ["tcp", "rdma", "nvlink"] 
 
-	std::vector<StorageClass> storage_classes{StorageClass::RAM_CPU};
-	double max_bw_gbps{10.0};
+	std::vector<StorageClass> storage_classes; // Must be configured via YAML
+	double max_bw_gbps; // Must be configured via YAML
 	int numa_node{0};
-	std::string version{"1.0.0"};
+	std::string version; // Must be configured via YAML
 
-	int64_t lease_ttl_sec{10};                  // Lease TTL for etcd registration - aligned with keystone service
-	int64_t heartbeat_interval_sec{5};          // Heartbeat interval - TTL/2 for lease maintenance
-	int64_t allocation_poll_interval_ms{100};   // How often to check for new allocations
+	int64_t lease_ttl_sec{10};          
+	int64_t heartbeat_interval_sec{5};  
+	int64_t allocation_poll_interval_ms{100}; 
 	
-	// Storage pools to create at startup
 	struct PoolConfig {
 		std::string pool_id;
 		StorageClass storage_class;
 		uint64_t size_bytes;
-		std::string mount_path; // For disk-based storage
-		int gpu_device_id{-1};  // For GPU storage
+		std::string mount_path; 
+		int gpu_device_id{-1}; 
 	};
 	std::vector<PoolConfig> storage_pools;
 	
@@ -52,7 +51,6 @@ struct WorkerServiceConfig {
 	                               heartbeat_interval_sec, allocation_poll_interval_ms)
 };
 
-// Standalone function to load configuration from YAML file
 ErrorCode load_worker_config_from_file(const std::string& config_file, WorkerServiceConfig& config);
 
 /**

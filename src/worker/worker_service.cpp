@@ -89,7 +89,7 @@ ErrorCode load_worker_config_from_file(const std::string& config_file, WorkerSer
 				config.storage_pools.push_back(std::move(pc));
 			}
 		}
-		
+		// arnavb check this
 		// Infer storage_classes summary
 		config.storage_classes.clear();
 		for (const auto& pc : config.storage_pools) {
