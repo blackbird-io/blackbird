@@ -10,6 +10,18 @@
 namespace blackbird::allocation {
 
 /**
+ * @brief Statistics about allocator state
+ */
+struct AllocatorStats {
+    size_t total_allocated_bytes;
+    size_t total_free_bytes;
+    size_t total_objects;
+    size_t total_shards;
+    double fragmentation_ratio;    // 1.0 - (largest_free_block / total_free)
+    std::unordered_map<StorageClass, size_t> bytes_per_class;
+};
+
+/**
  * @brief Allocation request containing all parameters needed for placement
  */
 struct AllocationRequest {
@@ -75,14 +87,7 @@ public:
      * @param storage_class Optional filter by storage class
      * @return Statistics about current allocations
      */
-    virtual struct AllocatorStats {
-        size_t total_allocated_bytes;
-        size_t total_free_bytes;
-        size_t total_objects;
-        size_t total_shards;
-        double fragmentation_ratio;    // 1.0 - (largest_free_block / total_free)
-        std::unordered_map<StorageClass, size_t> bytes_per_class;
-    } get_stats(std::optional<StorageClass> storage_class = std::nullopt) const = 0;
+    virtual AllocatorStats get_stats(std::optional<StorageClass> storage_class = std::nullopt) const = 0;
     
     /**
      * @brief Validate allocator internal consistency (for debugging)

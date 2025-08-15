@@ -505,12 +505,12 @@ ErrorCode KeystoneService::allocate_data_copies(const ObjectKey& key, size_t dat
     
     // Use the new allocator
     auto result = allocator_->allocate_data_copies(key, data_size, config, current_pools);
-    if (!result) {
-        LOG(ERROR) << "Allocation failed for key " << key << ": " << static_cast<int>(result.error());
-        return result.error();
+    if (!is_ok(result)) {
+        LOG(ERROR) << "Allocation failed for key " << key << ": " << static_cast<int>(get_error(result));
+        return get_error(result);
     }
     
-    copies = std::move(*result);
+    copies = std::move(get_value(result));
     LOG(INFO) << "Successfully allocated " << copies.size() << " copies for key " << key;
     
     return ErrorCode::OK;

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "blackbird/allocation/allocator_interface.h"
-#include "blackbird/keystone/keystone_service.h"
+#include "blackbird/common/types.h"
 #include <memory>
 
 namespace blackbird::allocation {
@@ -43,7 +43,7 @@ public:
      * @param storage_class Optional filter by storage class
      * @return Current allocation statistics
      */
-    IAllocator::AllocatorStats get_allocator_stats(std::optional<StorageClass> storage_class = std::nullopt) const;
+    AllocatorStats get_allocator_stats(std::optional<StorageClass> storage_class = std::nullopt) const;
     
     /**
      * @brief Check if allocation request can be satisfied

@@ -22,6 +22,7 @@ enum class ErrorCode : uint32_t {
     INVALID_STATE,
     OPERATION_TIMEOUT,
     RESOURCE_EXHAUSTED,
+    NOT_IMPLEMENTED,
     
     // Storage domain (2000-2999)
     BUFFER_OVERFLOW = get_domain_base(Domain::STORAGE),
@@ -30,6 +31,7 @@ enum class ErrorCode : uint32_t {
     MEMORY_POOL_ALREADY_EXISTS,
     INVALID_MEMORY_POOL,
     ALLOCATION_FAILED,
+    INSUFFICIENT_SPACE,
     MEMORY_ACCESS_ERROR,
     
     // Network domain (3000-3999)

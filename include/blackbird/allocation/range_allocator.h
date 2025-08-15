@@ -72,6 +72,7 @@ private:
     void merge_adjacent_ranges();
     std::map<uint64_t, uint64_t>::iterator find_best_fit(uint64_t size);
     std::map<uint64_t, uint64_t>::iterator find_first_fit(uint64_t size);
+    std::map<uint64_t, uint64_t>::const_iterator find_first_fit(uint64_t size) const;
 };
 
 /**

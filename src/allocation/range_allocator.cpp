@@ -149,6 +149,11 @@ std::map<uint64_t, uint64_t>::iterator PoolAllocator::find_first_fit(uint64_t si
                        [size](const auto& pair) { return pair.second >= size; });
 }
 
+std::map<uint64_t, uint64_t>::const_iterator PoolAllocator::find_first_fit(uint64_t size) const {
+    return std::find_if(free_ranges_.begin(), free_ranges_.end(),
+                       [size](const auto& pair) { return pair.second >= size; });
+}
+
 // RangeAllocator Implementation  
 RangeAllocator::RangeAllocator() {
     LOG(INFO) << "Created RangeAllocator";
@@ -205,7 +210,7 @@ ErrorCode RangeAllocator::free(const ObjectKey& object_key) {
     return ErrorCode::OK;
 }
 
-IAllocator::AllocatorStats RangeAllocator::get_stats(std::optional<StorageClass> storage_class) const {
+AllocatorStats RangeAllocator::get_stats(std::optional<StorageClass> storage_class) const {
     std::shared_lock<std::shared_mutex> pools_lock(pools_mutex_);
     std::shared_lock<std::shared_mutex> alloc_lock(allocations_mutex_);
     

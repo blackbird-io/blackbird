@@ -49,7 +49,7 @@ ErrorCode KeystoneAllocatorAdapter::free_object(const ObjectKey& key) {
     return result;
 }
 
-IAllocator::AllocatorStats 
+AllocatorStats 
 KeystoneAllocatorAdapter::get_allocator_stats(std::optional<StorageClass> storage_class) const {
     return allocator_->get_stats(storage_class);
 }

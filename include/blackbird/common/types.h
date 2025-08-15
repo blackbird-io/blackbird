@@ -149,7 +149,12 @@ struct WorkerConfig {
 	std::vector<StorageClass> preferred_classes{};             // Preferred storage classes
 	uint64_t ttl_ms{30 * 60 * 1000};                           // Time-to-live in milliseconds
 	
-	NLOHMANN_DEFINE_TYPE_INTRUSIVE(WorkerConfig, replication_factor, max_workers_per_copy, enable_soft_pin, preferred_node, preferred_classes, ttl_ms)
+	// Allocation strategy configuration - no hardcoded defaults in adapter
+	bool enable_locality_awareness{true};                      // Use locality information for placement
+	bool prefer_contiguous{false};                             // Prefer single large allocation vs striping
+	size_t min_shard_size{4096};                              // Minimum shard size in bytes
+	
+	NLOHMANN_DEFINE_TYPE_INTRUSIVE(WorkerConfig, replication_factor, max_workers_per_copy, enable_soft_pin, preferred_node, preferred_classes, ttl_ms, enable_locality_awareness, prefer_contiguous, min_shard_size)
 	
 	friend std::ostream& operator<<(std::ostream& os, const WorkerConfig& config) noexcept {
 		return os << "WorkerConfig{replication_factor=" << config.replication_factor
@@ -157,7 +162,10 @@ struct WorkerConfig {
 				  << ", enable_soft_pin=" << config.enable_soft_pin
 				  << ", preferred_node=" << config.preferred_node
 				  << ", preferred_classes.size=" << config.preferred_classes.size()
-				  << ", ttl_ms=" << config.ttl_ms << "}";
+				  << ", ttl_ms=" << config.ttl_ms
+				  << ", enable_locality_awareness=" << config.enable_locality_awareness
+				  << ", prefer_contiguous=" << config.prefer_contiguous
+				  << ", min_shard_size=" << config.min_shard_size << "}";
 	}
 };
 
