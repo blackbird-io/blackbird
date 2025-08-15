@@ -117,11 +117,11 @@ TEST(PoolAllocatorFreeMerge, MergeWithPrevAndNextNeighborsOnly) {
     auto b = alloc.allocate(200); ASSERT_TRUE(b);
     auto c = alloc.allocate(300); ASSERT_TRUE(c);
 
-    // Free A and C so free list has [0..100) and [600..1000)
+    // Free A and C; after freeing C it merges with tail -> free blocks [0..100) and [300..1000)
     alloc.free(*a);
     alloc.free(*c);
-    EXPECT_EQ(alloc.total_free(), 700u);
-    EXPECT_EQ(alloc.largest_free_block(), 400u);
+    EXPECT_EQ(alloc.total_free(), 800u);
+    EXPECT_EQ(alloc.largest_free_block(), 700u);
 
     // Now free B; should merge with prev [0..100) and next [600..1000) to form [0..1000)
     alloc.free(*b);
@@ -140,12 +140,12 @@ TEST(PoolAllocatorFreeMerge, MergeWithOnlyPrevOrOnlyNext) {
     // Free B first -> free [100..300)
     alloc.free(*b);
 
-    // Free C next -> adjacent to next, merges to [100..400)
+    // Free C next -> merges with [100..300) and tail [400..1000) -> [100..1000)
     alloc.free(*c);
-    EXPECT_EQ(alloc.total_free(), 300u + 600u); // [100..400) + [400..1000)
-    EXPECT_EQ(alloc.largest_free_block(), 600u);
+    EXPECT_EQ(alloc.total_free(), 900u);
+    EXPECT_EQ(alloc.largest_free_block(), 900u);
 
-    // Free A -> merges with prev to produce [0..400)
+    // Free A -> merges with [100..1000) to produce [0..1000)
     alloc.free(*a);
     EXPECT_EQ(alloc.total_free(), 1000u);
     EXPECT_EQ(alloc.largest_free_block(), 1000u);
@@ -169,7 +169,7 @@ TEST(PoolAllocatorFreeMerge, NoMergeWhenNonAdjacent) {
 
     // Free B merges between A and C into [0..300)
     alloc.free(*b);
-    EXPECT_EQ(alloc.largest_free_block(), 300u);
+    EXPECT_EQ(alloc.largest_free_block(), 500u); // tail [500..1000)
 }
 
 TEST(PoolAllocatorStats, FragmentationComputesCorrectly) {
