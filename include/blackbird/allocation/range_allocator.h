@@ -69,7 +69,6 @@ private:
     std::map<uint64_t, uint64_t> free_ranges_;  // offset -> length
     
     // Helper methods
-    void merge_adjacent_ranges();
     std::map<uint64_t, uint64_t>::iterator find_best_fit(uint64_t size);
     std::map<uint64_t, uint64_t>::iterator find_first_fit(uint64_t size);
     std::map<uint64_t, uint64_t>::const_iterator find_first_fit(uint64_t size) const;
@@ -91,8 +90,6 @@ public:
     ErrorCode free(const ObjectKey& object_key) override;
     
     AllocatorStats get_stats(std::optional<StorageClass> storage_class) const override;
-    
-    bool validate_consistency() const override;
     
     size_t get_free_space(StorageClass storage_class) const override;
     

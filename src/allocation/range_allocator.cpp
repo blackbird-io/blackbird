@@ -130,26 +130,6 @@ MemoryLocation PoolAllocator::to_memory_location(const Range& range) const {
     };
 }
 
-void PoolAllocator::merge_adjacent_ranges() {
-    // Fallback full merge (currently unused by free()).
-    if (free_ranges_.size() <= 1) return;
-    
-    auto it = free_ranges_.begin();
-    while (it != free_ranges_.end()) {
-        auto next_it = std::next(it);
-        if (next_it != free_ranges_.end() && it->first + it->second == next_it->first) {
-            uint64_t merged_length = it->second + next_it->second;
-            uint64_t offset = it->first;
-            free_ranges_.erase(next_it);
-            it->second = merged_length;
-            VLOG(3) << "Merged adjacent ranges at offset " << offset 
-                    << " new length=" << merged_length;
-            continue;
-        }
-        ++it;
-    }
-}
-
 std::map<uint64_t, uint64_t>::iterator PoolAllocator::find_best_fit(uint64_t size) {
     // Find smallest range that can fit the request
     auto best_it = free_ranges_.end();
@@ -175,7 +155,6 @@ std::map<uint64_t, uint64_t>::const_iterator PoolAllocator::find_first_fit(uint6
                        [size](const auto& pair) { return pair.second >= size; });
 }
 
-// RangeAllocator Implementation  
 RangeAllocator::RangeAllocator() {
     LOG(INFO) << "Created RangeAllocator";
 }
@@ -184,12 +163,10 @@ Result<AllocationResult>
 RangeAllocator::allocate(const AllocationRequest& request,
                         const std::unordered_map<MemoryPoolId, MemoryPool>& pools) {
     
-    // Ensure all pools have allocators
     for (const auto& [pool_id, pool] : pools) {
         ensure_pool_allocator(pool);
     }
     
-    // Select candidate pools based on request preferences
     auto candidate_pools = select_candidate_pools(request, pools);
     if (candidate_pools.empty()) {
         LOG(WARNING) << "No suitable pools found for allocation request " 
@@ -197,7 +174,6 @@ RangeAllocator::allocate(const AllocationRequest& request,
         return ErrorCode::MEMORY_POOL_NOT_FOUND;
     }
     
-    // Choose allocation strategy
     if (request.enable_striping && candidate_pools.size() > 1) {
         return allocate_with_striping(request, candidate_pools);
     } else {
@@ -274,14 +250,6 @@ AllocatorStats RangeAllocator::get_stats(std::optional<StorageClass> storage_cla
     return stats;
 }
 
-bool RangeAllocator::validate_consistency() const {
-    // TODO: Implement consistency checks
-    // - Verify no overlapping allocations
-    // - Check that all allocated ranges are tracked in object_allocations_
-    // - Validate free lists are properly merged
-    return true;
-}
-
 size_t RangeAllocator::get_free_space(StorageClass storage_class) const {
     std::shared_lock<std::shared_mutex> lock(pools_mutex_);
     
@@ -311,10 +279,6 @@ bool RangeAllocator::can_allocate(const AllocationRequest& request,
     
     return total_available >= total_needed;
 }
-
-// ============================================================================
-// Private Implementation Methods
-// ============================================================================
 
 Result<AllocationResult>
 RangeAllocator::allocate_with_striping(const AllocationRequest& request,
@@ -384,45 +348,71 @@ RangeAllocator::allocate_contiguous(const AllocationRequest& request,
     return ErrorCode::NOT_IMPLEMENTED;
 }
 
+// Select pools that can satisfy the request by prioritizing preferred classes first, then falling back.
+// Guarantees that the returned set can meet per-pool shard size for some workers_per_copy = [1, max_workers_per_copy].
 std::vector<MemoryPoolId> 
 RangeAllocator::select_candidate_pools(const AllocationRequest& request,
                                       const std::unordered_map<MemoryPoolId, MemoryPool>& pools) const {
-    std::vector<MemoryPoolId> candidates;
+    std::vector<MemoryPoolId> preferred_all;
+    std::vector<MemoryPoolId> fallback_all;
+    preferred_all.reserve(pools.size());
+    fallback_all.reserve(pools.size());
     
-    // Filter by storage class preferences
+    auto is_preferred_class = [&](StorageClass cls) {
+        if (request.preferred_classes.empty()) return true;
+        return std::find(request.preferred_classes.begin(), request.preferred_classes.end(), cls)
+               != request.preferred_classes.end();
+    };
+    
     for (const auto& [pool_id, pool] : pools) {
-        // Check if pool has enough space
-        if (pool.available() < request.data_size / request.max_workers_per_copy) {
-            continue;
-        }
-        
-        // Check storage class preferences
-        if (!request.preferred_classes.empty()) {
-            // TODO: Get storage class from pool
-            // For now, assume all pools are RAM_CPU
-            bool matches_preference = std::find(request.preferred_classes.begin(),
-                                               request.preferred_classes.end(),
-                                               StorageClass::RAM_CPU) != request.preferred_classes.end();
-            if (!matches_preference) {
-                continue;
-            }
-        }
-        
-        // Check node preference
         if (!request.preferred_node.empty() && pool.node_id != request.preferred_node) {
             continue;
         }
-        
-        candidates.push_back(pool_id);
+        if (is_preferred_class(pool.storage_class)) {
+            preferred_all.push_back(pool_id);
+        } else {
+            fallback_all.push_back(pool_id);
+        }
     }
     
-    // Sort by available space (largest first) for better allocation success
-    std::sort(candidates.begin(), candidates.end(), 
-              [&pools](const MemoryPoolId& a, const MemoryPoolId& b) {
-                  return pools.at(a).available() > pools.at(b).available();
-              });
+    auto sort_by_available = [&pools](std::vector<MemoryPoolId>& v) {
+        std::sort(v.begin(), v.end(), [&pools](const MemoryPoolId& a, const MemoryPoolId& b) {
+            return pools.at(a).available() > pools.at(b).available();
+        });
+    };
+    sort_by_available(preferred_all);
+    sort_by_available(fallback_all);
     
-    return candidates;
+    auto ceil_div = [](size_t a, size_t b) { return (a + b - 1) / b; };
+    const size_t max_workers = std::min(request.max_workers_per_copy,
+                                        preferred_all.size() + fallback_all.size());
+    
+    for (size_t w = max_workers; w >= 1; --w) {
+        const size_t required_per_pool = ceil_div(request.data_size, w);
+        std::vector<MemoryPoolId> selected;
+        selected.reserve(w);
+        
+        for (const auto& pid : preferred_all) {
+            if (selected.size() == w) break;
+            if (pools.at(pid).available() >= required_per_pool) {
+                selected.push_back(pid);
+            }
+        }
+        if (selected.size() < w) {
+            for (const auto& pid : fallback_all) {
+                if (selected.size() == w) break;
+                if (pools.at(pid).available() >= required_per_pool) {
+                    selected.push_back(pid);
+                }
+            }
+        }
+        if (selected.size() == w) {
+            return selected;
+        }
+        if (w == 1) break;
+    }
+    
+    return {};
 }
 
 void RangeAllocator::ensure_pool_allocator(const MemoryPool& pool) {

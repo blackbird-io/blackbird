@@ -89,11 +89,7 @@ public:
      */
     virtual AllocatorStats get_stats(std::optional<StorageClass> storage_class = std::nullopt) const = 0;
     
-    /**
-     * @brief Validate allocator internal consistency (for debugging)
-     * @return True if internal state is consistent
-     */
-    virtual bool validate_consistency() const = 0;
+    
     
     /**
      * @brief Get free space in bytes for a specific storage class

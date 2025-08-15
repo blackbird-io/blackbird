@@ -26,14 +26,13 @@ MemoryPool make_pool(const std::string& id, size_t size, size_t used = 0) {
 
 } // namespace
 
-TEST(RangeAllocatorBasics, EmptyStatsAndValidation) {
+TEST(RangeAllocatorBasics, EmptyStats) {
     RangeAllocator ra;
     auto stats = ra.get_stats(std::nullopt);
     EXPECT_EQ(stats.total_allocated_bytes, 0u);
     EXPECT_EQ(stats.total_free_bytes, 0u);
     EXPECT_EQ(stats.total_objects, 0u);
     EXPECT_EQ(stats.total_shards, 0u);
-    EXPECT_TRUE(ra.validate_consistency());
 }
 
 TEST(RangeAllocatorBasics, CanAllocateEstimationRespectsPreferredClasses) {
@@ -82,7 +81,6 @@ TEST(RangeAllocatorStriping, FreeMergesCorrectlyAcrossPoolsForObject) {
         return;
     }
 
-    // Free the object; should succeed even if a no-op placement conversion is used
     EXPECT_EQ(ra.free("obj-merge"), ErrorCode::OK);
 }
 
