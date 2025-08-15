@@ -23,14 +23,14 @@ keystone:
   service_refresh_interval_sec: 30       # How often to refresh service registration 
   worker_heartbeat_ttl_sec: 30           # Worker considered stale after this time
   client_ttl_sec: 300                    # Client session timeout
-  gc_interval_sec: 30                    # Garbage collection frequency
+  gc_interval_sec: 30                    # Cleanup frequency
   health_check_interval_sec: 10          # Health check frequency
   
   # Operational Settings
   max_replicas: 3                        # Maximum replicas per object
   default_replicas: 1                    # Default replication factor
   
-# Logging Configuration (optional)
+# Logging Configuration
 logging:
   level: "INFO"
   log_to_file: false
