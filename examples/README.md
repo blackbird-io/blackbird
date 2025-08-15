@@ -18,9 +18,8 @@ The compiled examples will be located in `build/examples/`.
 
 ### benchmark_disk_backends
 
-Benchmarks the performance of different disk storage backends:
-- `DiskBackend`: Basic POSIX I/O implementation
-- `IoUringDiskBackend`: io_uring-based implementation
+Benchmarks the performance of the high-performance disk storage backend:
+- `IoUringDiskBackend`: High-performance io_uring-based async I/O implementation
 
 Usage:
 ```bash

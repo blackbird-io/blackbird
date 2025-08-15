@@ -1,4 +1,3 @@
-#include "blackbird/worker/storage/disk_backend.h"
 #include "blackbird/worker/storage/iouring_disk_backend.h"
 #include <chrono>
 #include <iostream>
@@ -118,19 +117,10 @@ int main() {
     std::cout << "Shard size: " << shard_size << " bytes\n";
     std::cout << "Test directory: " << test_dir << "\n";
     
-    // Benchmark Basic DiskBackend
-    try {
-        auto basic_backend = std::make_unique<DiskBackend>(capacity, StorageClass::SSD, test_dir + "/basic");
-        auto basic_result = benchmark_backend(std::move(basic_backend), "Basic DiskBackend (POSIX I/O)", num_operations, shard_size);
-        print_results(basic_result);
-    } catch (const std::exception& e) {
-        std::cerr << "Basic DiskBackend benchmark failed: " << e.what() << std::endl;
-    }
-    
-    // Benchmark IoUring DiskBackend
+    // Benchmark IoUring DiskBackend (only backend now)
     try {
         auto iouring_backend = std::make_unique<IoUringDiskBackend>(capacity, StorageClass::SSD, test_dir + "/iouring");
-        auto iouring_result = benchmark_backend(std::move(iouring_backend), "IoUring DiskBackend (Async I/O)", num_operations, shard_size);
+        auto iouring_result = benchmark_backend(std::move(iouring_backend), "High-Performance IoUring DiskBackend", num_operations, shard_size);
         print_results(iouring_result);
     } catch (const std::exception& e) {
         std::cerr << "IoUring DiskBackend benchmark failed: " << e.what() << std::endl;

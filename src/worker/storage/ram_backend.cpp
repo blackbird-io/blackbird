@@ -1,5 +1,4 @@
 #include "blackbird/worker/storage/ram_backend.h"
-#include "blackbird/worker/storage/disk_backend.h"
 #include "blackbird/worker/storage/iouring_disk_backend.h"
 
 #include <glog/logging.h>
@@ -287,20 +286,8 @@ std::unique_ptr<StorageBackend> create_storage_backend(StorageClass storage_clas
         case StorageClass::HDD: {
             // Parse mount path from config
             std::string mount_path = config.empty() ? "/tmp" : config;
-            try {
-                // Use high-performance io_uring backend for disk storage
-                return std::make_unique<IoUringDiskBackend>(capacity, storage_class, mount_path);
-            } catch (const std::exception& e) {
-                LOG(ERROR) << "Failed to create IoUringDiskBackend: " << e.what();
-                // Fallback to basic disk backend if io_uring fails
-                try {
-                    LOG(WARNING) << "Falling back to basic DiskBackend";
-                    return std::make_unique<DiskBackend>(capacity, storage_class, mount_path);
-                } catch (const std::exception& fallback_e) {
-                    LOG(ERROR) << "Failed to create fallback DiskBackend: " << fallback_e.what();
-                    return nullptr;
-                }
-            }
+            // Use high-performance io_uring backend for disk storage
+            return std::make_unique<IoUringDiskBackend>(capacity, storage_class, mount_path);
         }
         
         default:

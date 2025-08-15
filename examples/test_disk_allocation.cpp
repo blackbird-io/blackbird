@@ -1,7 +1,7 @@
 #include <iostream>
 #include <map>
 #include "blackbird/allocation/range_allocator.h"
-#include "blackbird/worker/storage/disk_backend.h"
+#include "blackbird/worker/storage/iouring_disk_backend.h"
 
 using namespace blackbird;
 using namespace blackbird::allocation;
@@ -9,15 +9,15 @@ using namespace blackbird::allocation;
 int main() {
     std::cout << "=== Blackbird Disk Storage Demo ===" << std::endl;
     
-    // Create a disk backend
-    DiskBackend disk_backend(10 * 1024 * 1024, StorageClass::NVME, "/tmp/blackbird_demo");
+    // Create a high-performance io_uring disk backend
+    IoUringDiskBackend disk_backend(10 * 1024 * 1024, StorageClass::NVME, "/tmp/blackbird_demo");
     auto init_result = disk_backend.initialize();
     if (init_result != ErrorCode::OK) {
         std::cerr << "Failed to initialize disk backend!" << std::endl;
         return 1;
     }
     
-    std::cout << "✅ Disk backend initialized successfully!" << std::endl;
+    std::cout << "✅ High-performance io_uring disk backend initialized successfully!" << std::endl;
     std::cout << "   Storage Class: NVME" << std::endl;
     std::cout << "   Total Capacity: " << disk_backend.get_total_capacity() << " bytes" << std::endl;
     std::cout << "   Mount Path: /tmp/blackbird_demo" << std::endl;
