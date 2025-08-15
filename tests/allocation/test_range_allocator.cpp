@@ -907,7 +907,7 @@ TEST(RangeAllocatorBehavior, ContiguousStrategyNotImplemented) {
         .preferred_classes = {StorageClass::RAM_CPU},
         .preferred_node = "",
         .enable_locality_awareness = true,
-        .enable_striping = false,   // force allocate_contiguous path
+        .enable_striping = false, 
         .prefer_contiguous = true,
         .min_shard_size = 4096
     };
