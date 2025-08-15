@@ -501,8 +501,7 @@ ErrorCode KeystoneService::allocate_data_copies(const ObjectKey& key, size_t dat
         LOG(ERROR) << "Allocator not initialized";
         return ErrorCode::INTERNAL_ERROR;
     }
-    
-    // Get current memory pools under shared lock
+    // arnavb: this is not thread safe, we need to allocate and mark the memory used in thread safe manner.
     std::shared_lock<std::shared_mutex> pools_lock(memory_pools_mutex_);
     std::unordered_map<MemoryPoolId, MemoryPool> current_pools = memory_pools_;
     pools_lock.unlock();
@@ -512,7 +511,6 @@ ErrorCode KeystoneService::allocate_data_copies(const ObjectKey& key, size_t dat
         return ErrorCode::MEMORY_POOL_NOT_FOUND;
     }
     
-    // Use the new allocator
     auto result = allocator_->allocate_data_copies(key, data_size, config, current_pools);
     if (!is_ok(result)) {
         LOG(ERROR) << "Allocation failed for key " << key << ": " << static_cast<int>(get_error(result));
@@ -521,61 +519,6 @@ ErrorCode KeystoneService::allocate_data_copies(const ObjectKey& key, size_t dat
     
     copies = std::move(get_value(result));
     LOG(INFO) << "Successfully allocated " << copies.size() << " copies for key " << key;
-    
-    return ErrorCode::OK;
-}
-
-ErrorCode KeystoneService::allocate_shards_for_copy(const ObjectKey& key, size_t data_size,
-                                                   size_t copy_id, size_t max_workers,
-                                                   std::vector<ShardPlacement>& shards) {
-    shards.clear();
-    
-    std::cout<< "DEBUG: Allocating shards for copy: " << copy_id <<std::endl;
-    std::shared_lock<std::shared_mutex> memory_pools_lock(memory_pools_mutex_);
-    
-    std::vector<MemoryPoolId> available_memory_pools;
-    for (const auto& [memory_pool_id, memory_pool] : memory_pools_) {
-        std::cout<< "DEBUG: Memory pool: " << memory_pool_id << " available: " << memory_pool.available() <<std::endl;
-        if (memory_pool.available() > 0) {
-            available_memory_pools.push_back(memory_pool_id);
-        }
-    }
-    memory_pools_lock.unlock();
-    
-    if (available_memory_pools.empty()) {
-        return ErrorCode::MEMORY_POOL_NOT_FOUND; 
-    }
-    
-    // Limit workers per copy
-    // arnavb: this is heavily broken, we need to have a memory allocator with ranges that can manage fragmentation and allocation of internally tracked memory pools
-    // Also try sharding the internal metadata, currently seems to be split across and spilling throughout the codebase, need better management
-    size_t workers_to_use = std::min(max_workers, available_memory_pools.size());
-    size_t shard_size = data_size / workers_to_use;
-    size_t remainder = data_size % workers_to_use;
-    std::cout<< "DEBUG: Data size: " << data_size <<std::endl;
-    std::cout<< "DEBUG: Workers to use: " << workers_to_use <<std::endl;
-    std::cout<< "DEBUG: Shard size: " << shard_size <<std::endl;
-    std::cout<< "DEBUG: Remainder: " << remainder <<std::endl;  
-    for (size_t i = 0; i < workers_to_use; ++i) {
-        ShardPlacement shard;
-        shard.worker_id = available_memory_pools[i];
-        shard.pool_id = "ram_pool_0"; // TODO: implement proper pool selection
-        
-        // Use preferred storage class if available, otherwise default to RAM_CPU
-        StorageClass storage_class = StorageClass::RAM_CPU;
-        // TODO: Implement preferred_classes selection logic based on available workers
-        // For now, use default storage class since we don't have per-operation config here
-        shard.storage_class = storage_class;
-        
-        size_t current_shard_size = shard_size + (i < remainder ? 1 : 0);
-        shard.length = current_shard_size;
-        
-        // TODO: Set proper endpoint and location details based on available memory pools
-        // For now, set default memory location
-        shard.location = MemoryLocation{0, 0, current_shard_size};
-        std::cout << "DEBUG: Shard: " << shard.worker_id << " " << shard.pool_id << " " << shard.length << std::endl;
-        shards.push_back(std::move(shard));
-    }
     
     return ErrorCode::OK;
 }

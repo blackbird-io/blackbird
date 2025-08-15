@@ -282,10 +282,7 @@ private:
     ErrorCode allocate_data_copies(const ObjectKey& key, size_t data_size, 
                                   const WorkerConfig& config,
                                   std::vector<CopyPlacement>& copies);
-                                  
-    ErrorCode allocate_shards_for_copy(const ObjectKey& key, size_t data_size,
-                                       size_t copy_id, size_t max_workers,
-                                       std::vector<ShardPlacement>& shards);
+                                   
     
     void cleanup_stale_workers();
     void cleanup_dead_worker(const std::string& worker_id);
