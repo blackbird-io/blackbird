@@ -7,6 +7,7 @@
 
 namespace blackbird {
 
+// todo: arnavb this is becoming a big file with too much logic, need to split it up
 KeystoneService::KeystoneService(const KeystoneConfig& config) 
     : config_(config) {
     LOG(INFO) << "Creating Keystone service with cluster_id: " << config_.cluster_id;
@@ -670,18 +671,12 @@ void KeystoneService::upsert_worker_memory_pool_from_json(const std::string& key
         
         // Parse memory pool metadata
         MemoryPool memory_pool;
-        memory_pool.id = doc.value("id", memory_pool_id); // fallback to memory_pool_id if not specified
+        memory_pool.id = doc.value("id", memory_pool_id);
         memory_pool.node_id = doc.value("node_id", "");
         memory_pool.base_addr = doc.value("base_addr", 0UL);
         memory_pool.size = doc.value("size", 0UL);
         memory_pool.used = doc.value("used", 0UL);
-        
-        if (doc.contains("storage_class")) {
-            uint32_t storage_class_int = doc.value("storage_class", static_cast<uint32_t>(StorageClass::STORAGE_UNSPECIFIED));
-            memory_pool.storage_class = static_cast<StorageClass>(storage_class_int);
-        } else {
-            memory_pool.storage_class = StorageClass::STORAGE_UNSPECIFIED;
-        }
+        memory_pool.storage_class = static_cast<StorageClass>(doc.value("storage_class", static_cast<uint32_t>(StorageClass::STORAGE_UNSPECIFIED)));
         
         if (doc.contains("ucx_address")) {
             memory_pool.ucx_address = doc["ucx_address"].get<UcxAddress>();
@@ -788,7 +783,7 @@ void KeystoneService::watch_heartbeat_namespace() {
     auto prefix = heartbeat_prefix();
     auto cb = [this](const std::string& key, const std::string& value, bool is_delete) {
         if (is_delete) {
-            // Heartbeat key deleted - worker is dead, clean up everything
+            // worker is dead, clean up everything
             auto pos = key.rfind('/');
             if (pos == std::string::npos || pos + 1 >= key.size()) return;
             std::string worker_id = key.substr(pos + 1);
@@ -796,7 +791,6 @@ void KeystoneService::watch_heartbeat_namespace() {
             LOG(WARNING) << "Worker heartbeat expired, cleaning up dead worker: " << worker_id;
             cleanup_dead_worker(worker_id);
         } else {
-            // Heartbeat updated - worker is alive
             update_worker_heartbeat(key, value);
         }
     };
@@ -971,7 +965,6 @@ void KeystoneService::load_existing_state_from_etcd() {
         return;
     }
 
-    // Load workers and worker memory pools
     std::vector<std::string> worker_keys, worker_values;
     auto err = etcd_->get_with_prefix(workers_prefix(), worker_keys, worker_values);
     if (err == ErrorCode::OK) {
@@ -979,7 +972,6 @@ void KeystoneService::load_existing_state_from_etcd() {
             const std::string& key = worker_keys[i];
             const std::string& value = worker_values[i];
             
-            // Check if this is a memory pool or worker registration
             if (key.find("/memory_pools/") != std::string::npos) {
                 upsert_worker_memory_pool_from_json(key, value);
             } else {
@@ -991,7 +983,6 @@ void KeystoneService::load_existing_state_from_etcd() {
         LOG(WARNING) << "Failed to load workers from etcd: " << error::to_string(err);
     }
 
-    // Do not load heartbeat keys anymore; liveness is via TTL
     
     // Load memory pools
     std::vector<std::string> memory_pool_keys, memory_pool_values;
@@ -1018,7 +1009,6 @@ void KeystoneService::setup_watcher_with_error_handling(const std::string& watch
 void KeystoneService::cleanup_dead_worker(const std::string& worker_id) {
     LOG(INFO) << "Cleaning up dead worker: " << worker_id;
     
-    // Remove from local tracking first
     std::vector<std::string> memory_pool_ids_to_remove;
     {
         std::unique_lock<std::shared_mutex> worker_lock(worker_registry_mutex_);
@@ -1032,7 +1022,6 @@ void KeystoneService::cleanup_dead_worker(const std::string& worker_id) {
         }
     }
     
-    // Remove worker's memory pools from global tracking
     {
         std::unique_lock<std::shared_mutex> pool_lock(memory_pools_mutex_);
         for (const auto& memory_pool_id : memory_pool_ids_to_remove) {
@@ -1048,14 +1037,12 @@ void KeystoneService::cleanup_dead_worker(const std::string& worker_id) {
     
     // Clean up persistent etcd keys (worker info and storage pools)
     if (etcd_) {
-        // Delete persistent worker info key
         std::string worker_key = make_worker_key(worker_id);
         auto err = etcd_->del(worker_key);
         if (err != ErrorCode::OK) {
             LOG(WARNING) << "Failed to delete worker key from etcd: " << worker_key;
         }
         
-        // Delete persistent storage pool keys
         for (const auto& memory_pool_id : memory_pool_ids_to_remove) {
             std::string pool_key = make_worker_memory_pool_key(worker_id, memory_pool_id);
             err = etcd_->del(pool_key);

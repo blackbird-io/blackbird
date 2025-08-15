@@ -154,7 +154,7 @@ RangeAllocator::RangeAllocator() {
     LOG(INFO) << "Created RangeAllocator";
 }
 
-tl::expected<AllocationResult, ErrorCode> 
+Result<AllocationResult> 
 RangeAllocator::allocate(const AllocationRequest& request,
                         const std::unordered_map<MemoryPoolId, MemoryPool>& pools) {
     
@@ -168,7 +168,7 @@ RangeAllocator::allocate(const AllocationRequest& request,
     if (candidate_pools.empty()) {
         LOG(WARNING) << "No suitable pools found for allocation request " 
                      << request.object_key;
-        return tl::unexpected(ErrorCode::MEMORY_POOL_NOT_FOUND);
+        return ErrorCode::MEMORY_POOL_NOT_FOUND;
     }
     
     // Choose allocation strategy
@@ -290,7 +290,7 @@ bool RangeAllocator::can_allocate(const AllocationRequest& request,
 // Private Implementation Methods
 // ============================================================================
 
-tl::expected<AllocationResult, ErrorCode>
+Result<AllocationResult>
 RangeAllocator::allocate_with_striping(const AllocationRequest& request,
                                       const std::vector<MemoryPoolId>& candidate_pools) {
     size_t per_copy_size = request.data_size;
@@ -321,13 +321,13 @@ RangeAllocator::allocate_with_striping(const AllocationRequest& request,
             auto pool_it = pool_allocators_.find(pool_id);
             if (pool_it == pool_allocators_.end()) {
                 rollback_allocation(copy_ranges);
-                return tl::unexpected(ErrorCode::MEMORY_POOL_NOT_FOUND);
+                return ErrorCode::MEMORY_POOL_NOT_FOUND;
             }
             
             auto range = pool_it->second->allocate(current_shard_size);
             if (!range) {
                 rollback_allocation(copy_ranges);
-                return tl::unexpected(ErrorCode::INSUFFICIENT_SPACE);
+                return ErrorCode::INSUFFICIENT_SPACE;
             }
             
             copy_ranges.emplace_back(pool_id, *range);
@@ -343,19 +343,19 @@ RangeAllocator::allocate_with_striping(const AllocationRequest& request,
     // Commit allocation
     auto commit_result = commit_allocation(request.object_key, {});  // TODO: Aggregate all ranges
     if (commit_result != ErrorCode::OK) {
-        return tl::unexpected(commit_result);
+        return commit_result;
     }
     
     result.pools_used = candidate_pools.size();
     return result;
 }
 
-tl::expected<AllocationResult, ErrorCode>
+Result<AllocationResult>
 RangeAllocator::allocate_contiguous(const AllocationRequest& request,
                                    const std::vector<MemoryPoolId>& candidate_pools) {
     // Try to allocate each copy as a single contiguous range
     // TODO: Implement contiguous allocation strategy
-    return tl::unexpected(ErrorCode::NOT_IMPLEMENTED);
+    return ErrorCode::NOT_IMPLEMENTED;
 }
 
 std::vector<MemoryPoolId> 

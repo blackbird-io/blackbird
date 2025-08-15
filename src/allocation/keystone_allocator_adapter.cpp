@@ -13,7 +13,7 @@ KeystoneAllocatorAdapter::KeystoneAllocatorAdapter(std::unique_ptr<IAllocator> a
     LOG(INFO) << "Created KeystoneAllocatorAdapter";
 }
 
-tl::expected<std::vector<CopyPlacement>, ErrorCode>
+Result<std::vector<CopyPlacement>>
 KeystoneAllocatorAdapter::allocate_data_copies(const ObjectKey& key,
                                               size_t data_size,
                                               const WorkerConfig& config,
@@ -22,13 +22,13 @@ KeystoneAllocatorAdapter::allocate_data_copies(const ObjectKey& key,
     auto request = to_allocation_request(key, data_size, config);
     
     auto result = allocator_->allocate(request, memory_pools);
-    if (!result) {
+    if (!is_ok(result)) {
         LOG(WARNING) << "Allocation failed for object " << key 
-                     << " size=" << data_size << " error=" << static_cast<int>(result.error());
-        return tl::unexpected(result.error());
+                     << " size=" << data_size << " error=" << static_cast<int>(get_error(result));
+        return get_error(result);
     }
     
-    auto copy_placements = to_copy_placements(*result, memory_pools);
+    auto copy_placements = to_copy_placements(get_value(result), memory_pools);
     
     LOG(INFO) << "Successfully allocated " << copy_placements.size() 
               << " copies for object " << key << " size=" << data_size;
@@ -169,10 +169,6 @@ ShardPlacement KeystoneAllocatorAdapter::create_shard_placement(const MemoryPool
 }
 
 StorageClass KeystoneAllocatorAdapter::get_pool_storage_class(const MemoryPool& pool) const {
-    if (pool.storage_class == StorageClass::STORAGE_UNSPECIFIED) {
-        throw std::runtime_error("Pool " + pool.id + " has STORAGE_UNSPECIFIED - worker did not provide storage_class information");
-    }
-    
     return pool.storage_class;
 }
 

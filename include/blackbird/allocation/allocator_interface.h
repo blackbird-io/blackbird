@@ -4,7 +4,6 @@
 #include <unordered_map>
 #include <memory>
 #include <shared_mutex>
-#include <tl/expected.hpp>
 
 #include "blackbird/common/types.h"
 
@@ -60,7 +59,7 @@ public:
      * @param pools Available memory pools (read-only reference)
      * @return Allocation result or error code
      */
-    virtual tl::expected<AllocationResult, ErrorCode> 
+    virtual Result<AllocationResult> 
     allocate(const AllocationRequest& request,
              const std::unordered_map<MemoryPoolId, MemoryPool>& pools) = 0;
     

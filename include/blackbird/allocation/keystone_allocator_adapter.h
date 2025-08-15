@@ -25,7 +25,7 @@ public:
      * @param memory_pools Available memory pools from Keystone
      * @return Copy placements or error
      */
-    tl::expected<std::vector<CopyPlacement>, ErrorCode>
+    Result<std::vector<CopyPlacement>>
     allocate_data_copies(const ObjectKey& key,
                         size_t data_size,
                         const WorkerConfig& config,

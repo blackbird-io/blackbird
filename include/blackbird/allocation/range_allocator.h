@@ -83,7 +83,7 @@ public:
     ~RangeAllocator() override = default;
     
     // IAllocator interface
-    tl::expected<AllocationResult, ErrorCode> 
+    Result<AllocationResult> 
     allocate(const AllocationRequest& request,
              const std::unordered_map<MemoryPoolId, MemoryPool>& pools) override;
     
@@ -112,11 +112,11 @@ private:
     std::unordered_map<ObjectKey, ObjectAllocation> object_allocations_;
     
     // Strategy implementation
-    tl::expected<AllocationResult, ErrorCode>
+    Result<AllocationResult>
     allocate_with_striping(const AllocationRequest& request,
                           const std::vector<MemoryPoolId>& candidate_pools);
     
-    tl::expected<AllocationResult, ErrorCode>
+    Result<AllocationResult>
     allocate_contiguous(const AllocationRequest& request,
                        const std::vector<MemoryPoolId>& candidate_pools);
     
