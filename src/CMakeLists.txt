@@ -7,6 +7,7 @@ set(BLACKBIRD_SOURCES
     etcd/etcd_service.cpp
     worker/worker_service.cpp
     worker/storage/ram_backend.cpp
+    worker/storage/mmap_disk_backend.cpp
     worker/storage/iouring_disk_backend.cpp
     transport/ucx_engine.cpp
     common/error/error_codes.cpp

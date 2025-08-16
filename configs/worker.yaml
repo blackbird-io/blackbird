@@ -31,11 +31,11 @@ storage_pools:
     storage_class: "RAM_CPU"
     size_bytes: 2147483648  # 2GB
     
-  # Disk Pools
-  - pool_id: "nvme_pool_0" 
-    storage_class: "NVME"
-    size_bytes: 1073741824  # 1GB
-    mount_path: "/tmp/blackbird_nvme"
+  # Disk Pools (commented out due to missing factory support)
+  # - pool_id: "nvme_pool_0" 
+  #   storage_class: "NVME"
+  #   size_bytes: 1073741824  # 1GB
+  #   mount_path: "/tmp/blackbird_nvme"
   #
   # - pool_id: "gpu_pool_0"
   #   storage_class: "RAM_GPU" 

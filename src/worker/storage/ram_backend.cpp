@@ -1,5 +1,6 @@
 #include "blackbird/worker/storage/ram_backend.h"
 #include "blackbird/worker/storage/iouring_disk_backend.h"
+#include "blackbird/worker/storage/mmap_disk_backend.h"
 
 #include <glog/logging.h>
 #include <algorithm>
@@ -50,7 +51,6 @@ Result<ReservationToken> RamBackend::reserve_shard(uint64_t size, const std::str
     
     std::lock_guard<std::mutex> lock(mutex_);
     
-    // Check if we have enough free space
     if (size > get_available_capacity()) {
         LOG(WARNING) << "Not enough free space: requested " << size 
                     << ", available " << get_available_capacity();
@@ -63,7 +63,6 @@ Result<ReservationToken> RamBackend::reserve_shard(uint64_t size, const std::str
         return ErrorCode::OUT_OF_MEMORY;
     }
     
-    // Generate token
     std::string token_id = generate_token_id();
     auto expires_at = std::chrono::system_clock::now() + std::chrono::minutes(10); // 10 minute expiry
     
@@ -75,7 +74,6 @@ Result<ReservationToken> RamBackend::reserve_shard(uint64_t size, const std::str
     token.size = size;
     token.expires_at = expires_at;
     
-    // Track the reservation
     Shard shard;
     shard.offset = offset;
     shard.size = size;
@@ -103,16 +101,13 @@ ErrorCode RamBackend::commit_shard(const ReservationToken& token) {
     
     if (token.is_expired()) {
         LOG(WARNING) << "Reservation expired: " << token.token_id;
-        // Clean up expired reservation
         used_capacity_ -= it->second.size;
         num_reservations_--;
         reservations_.erase(it);
         return ErrorCode::OPERATION_TIMEOUT;
     }
     
-    // Mark as committed
     it->second.committed = true;
-    committed_shards_[token.remote_addr] = token.size;
     num_committed_shards_++;
     
     LOG(INFO) << "Committed shard: token " << token.token_id 
@@ -130,7 +125,6 @@ ErrorCode RamBackend::abort_shard(const ReservationToken& token) {
         return ErrorCode::OBJECT_NOT_FOUND;
     }
     
-    // Free the reservation
     used_capacity_ -= it->second.size;
     num_reservations_--;
     reservations_.erase(it);
@@ -143,21 +137,24 @@ ErrorCode RamBackend::abort_shard(const ReservationToken& token) {
 ErrorCode RamBackend::free_shard(uint64_t remote_addr, uint64_t size) {
     std::lock_guard<std::mutex> lock(mutex_);
     
-    auto it = committed_shards_.find(remote_addr);
-    if (it == committed_shards_.end()) {
+    std::string shard_token_id;
+    bool found = false;
+    for (const auto& [token_id, shard] : reservations_) {
+        if (shard.committed && base_address_ + shard.offset == remote_addr && shard.size == size) {
+            shard_token_id = token_id;
+            found = true;
+            break;
+        }
+    }
+    
+    if (!found) {
         LOG(WARNING) << "Committed shard not found: " << std::hex << remote_addr;
         return ErrorCode::OBJECT_NOT_FOUND;
     }
     
-    if (it->second != size) {
-        LOG(WARNING) << "Size mismatch: expected " << it->second << ", got " << size;
-        return ErrorCode::INVALID_PARAMETERS;
-    }
-    
-    // Free the shard
     used_capacity_ -= size;
     num_committed_shards_--;
-    committed_shards_.erase(it);
+    reservations_.erase(shard_token_id);
     
     LOG(INFO) << "Freed shard: addr " << std::hex << remote_addr << ", size " << size;
     
@@ -186,7 +183,6 @@ ErrorCode RamBackend::initialize() {
         return ErrorCode::OK;
     }
     
-    // Allocate memory
     base_memory_ = std::malloc(capacity_);
     if (base_memory_ == nullptr) {
         LOG(ERROR) << "Failed to allocate " << capacity_ << " bytes";
@@ -194,8 +190,6 @@ ErrorCode RamBackend::initialize() {
     }
     
     base_address_ = reinterpret_cast<uintptr_t>(base_memory_);
-    
-    // Initialize rkey (placeholder for UCX integration)
     rkey_ = static_cast<uint32_t>(base_address_ & 0xFFFFFFFF);
     
     LOG(INFO) << "RamBackend initialized: base_addr=0x" << std::hex << base_address_
@@ -209,15 +203,13 @@ void RamBackend::shutdown() {
     
     if (base_memory_ != nullptr) {
         LOG(INFO) << "Shutting down RamBackend with " << reservations_.size() 
-                  << " active reservations and " << committed_shards_.size() 
-                  << " committed shards";
+                  << " active reservations";
         
         std::free(base_memory_);
         base_memory_ = nullptr;
         base_address_ = 0;
         
         reservations_.clear();
-        committed_shards_.clear();
         used_capacity_ = 0;
         num_reservations_ = 0;
         num_committed_shards_ = 0;
@@ -232,46 +224,38 @@ std::string RamBackend::generate_token_id() {
 }
 
 uint64_t RamBackend::find_free_offset(uint64_t size) {
-    // Simple first-fit allocation
-    // This is not efficient for production but works for testing
-    
-    if (reservations_.empty() && committed_shards_.empty()) {
-        return 0; // First allocation
-    }
-    
-    // Collect all used ranges
-    std::vector<std::pair<uint64_t, uint64_t>> used_ranges; // {offset, size}
+    std::vector<std::pair<uint64_t, uint64_t>> used_ranges;
     
     for (const auto& [token_id, shard] : reservations_) {
-        used_ranges.emplace_back(shard.offset, shard.size);
+        if (shard.committed) {
+            used_ranges.push_back({shard.offset, shard.offset + shard.size});
+        }
     }
     
-    for (const auto& [addr, shard_size] : committed_shards_) {
-        uint64_t offset = addr - base_address_;
-        used_ranges.emplace_back(offset, shard_size);
-    }
-    
-    // Sort by offset
     std::sort(used_ranges.begin(), used_ranges.end());
     
-    // Find first gap that fits
-    uint64_t current_offset = 0;
-    for (const auto& [offset, shard_size] : used_ranges) {
-        if (offset >= current_offset + size) {
-            return current_offset; // Found a gap
+    if (used_ranges.empty() || used_ranges[0].first >= size) {
+        return 0;
+    }
+    
+    for (size_t i = 0; i < used_ranges.size() - 1; ++i) {
+        uint64_t gap_start = used_ranges[i].second;
+        uint64_t gap_end = used_ranges[i + 1].first;
+        if (gap_end - gap_start >= size) {
+            return gap_start;
         }
-        current_offset = std::max(current_offset, offset + shard_size);
     }
     
-    // Check if we can fit at the end
-    if (current_offset + size <= capacity_) {
-        return current_offset;
+    if (!used_ranges.empty()) {
+        uint64_t last_end = used_ranges.back().second;
+        if (capacity_ - last_end >= size) {
+            return last_end;
+        }
     }
     
-    return UINT64_MAX; // No space found
+    return UINT64_MAX; 
 }
 
-// Factory function implementation
 std::unique_ptr<StorageBackend> create_storage_backend(StorageClass storage_class,
                                                       uint64_t capacity,
                                                       const std::string& config) {
@@ -280,17 +264,8 @@ std::unique_ptr<StorageBackend> create_storage_backend(StorageClass storage_clas
         case StorageClass::RAM_GPU:
             return std::make_unique<RamBackend>(capacity, storage_class);
         
-        case StorageClass::NVME:
-        case StorageClass::SSD:
-        case StorageClass::HDD: {
-            // Parse mount path from config
-            std::string mount_path = config.empty() ? "/tmp" : config;
-            // Use high-performance io_uring backend for disk storage
-            return std::make_unique<IoUringDiskBackend>(capacity, storage_class, mount_path);
-        }
-        
         default:
-            LOG(ERROR) << "Unknown storage class: " << static_cast<uint32_t>(storage_class);
+            LOG(ERROR) << "RamBackend factory only supports RAM storage classes, got: " << static_cast<uint32_t>(storage_class);
             return nullptr;
     }
 }

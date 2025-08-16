@@ -15,7 +15,7 @@
 namespace blackbird {
 
 /**
- * @brief High-performance disk-based storage backend using io_uring
+ * @brief High-performance storage backend using io_uring
  * Supports NVME, SSD, and HDD storage classes with async I/O operations
  */
 class IoUringDiskBackend : public StorageBackend {
@@ -60,21 +60,18 @@ private:
     std::filesystem::path storage_dir_;
     uint32_t queue_depth_;
     
-    // io_uring state
     struct io_uring ring_;
     std::atomic<bool> ring_initialized_{false};
     std::atomic<bool> shutdown_requested_{false};
     
-    // File management
     uintptr_t base_address_hash_{0};
     uint32_t rkey_{0};
     
-    // Async operation tracking
     struct AsyncOperation {
         enum Type { WRITE, READ, DELETE };
         Type type;
         std::string file_path;
-        std::shared_ptr<std::vector<uint8_t>> data;  // Keep data alive during async op
+        std::shared_ptr<std::vector<uint8_t>> data; 
         uint64_t size;
         int fd;
         std::atomic<bool> completed{false};
@@ -85,11 +82,10 @@ private:
     };
     
     using AsyncOpPtr = std::shared_ptr<AsyncOperation>;
-    std::unordered_map<uint64_t, AsyncOpPtr> pending_operations_;  // user_data -> operation
+    std::unordered_map<uint64_t, AsyncOpPtr> pending_operations_;  
     std::mutex operations_mutex_;
     uint64_t next_operation_id_{1};
     
-    // Shard tracking
     struct IoUringShard {
         std::string file_path;
         uint64_t file_offset;
@@ -105,17 +101,13 @@ private:
     std::unordered_map<uint64_t, IoUringShard> committed_shards_; // remote_addr -> shard
     mutable std::mutex mutex_;
     
-    // Stats
     mutable uint64_t used_capacity_{0};
     mutable uint64_t num_reservations_{0};
     mutable uint64_t num_committed_shards_{0};
     mutable uint64_t total_async_operations_{0};
     
-    // Utilities
     std::mt19937 rng_;
     uint64_t next_file_id_{0};
-    
-    // Note: Using synchronous operations, no completion thread needed
     
     // Private methods
     std::string generate_token_id();
@@ -127,12 +119,9 @@ private:
     ErrorCode delete_shard_file_async(const std::string& file_path);
     uint64_t calculate_disk_usage() const;
     
-    // io_uring specific methods
     ErrorCode setup_io_uring();
     void cleanup_io_uring();
-    // Note: Async methods removed - using synchronous operations for now
-    
-    // Helper for opening files with optimal flags
+
     int open_file_optimized(const std::string& file_path, int flags, mode_t mode = 0644);
 };
 

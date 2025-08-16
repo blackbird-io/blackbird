@@ -1,4 +1,5 @@
 #include "blackbird/worker/worker_service.h"
+#include "blackbird/worker/storage/mmap_disk_backend.h"
 
 #include <glog/logging.h>
 #include <nlohmann/json.hpp>
@@ -116,13 +117,10 @@ WorkerService::~WorkerService() {
 		stop();
 	}
 	
-	// Manually cleanup persistent worker and storage pool keys
 	if (etcd_) {
-		// Delete worker info
 		std::string worker_key = workers_key();
 		etcd_->del(worker_key);
 		
-		// Delete storage pool keys
 		{
 			std::shared_lock<std::shared_mutex> lock(storage_pools_mutex_);
 			for (const auto& [pool_id, backend] : storage_pools_) {
@@ -131,7 +129,6 @@ WorkerService::~WorkerService() {
 			}
 		}
 		
-		// Heartbeat will automatically expire due to TTL
 	}
 }
 
@@ -167,13 +164,11 @@ ErrorCode WorkerService::initialize() {
 		}
 	}
 	
-	// Initialize UCX
 	ucx_engine_ = std::make_unique<UcxEngine>();
 	if (!ucx_engine_->init()) {
 		LOG(ERROR) << "UCX init failed";
 		return ErrorCode::INTERNAL_ERROR;
 	}
-	// Start UCX listener
 	{
 		std::string host = "0.0.0.0";
 		uint16_t port = 0;
@@ -198,8 +193,10 @@ ErrorCode WorkerService::initialize() {
 		std::shared_lock<std::shared_mutex> lock(storage_pools_mutex_);
 		for (const auto& [pool_id, backend] : storage_pools_) {
 			StorageClass storage_class = backend->get_storage_class();
-			
-			if (storage_class == StorageClass::RAM_CPU || storage_class == StorageClass::RAM_GPU) {
+			// arnavb: RAM_GPU Does not work, will need to fix
+			if (storage_class == StorageClass::RAM_CPU || storage_class == StorageClass::RAM_GPU ||
+			    storage_class == StorageClass::NVME || storage_class == StorageClass::SSD || 
+			    storage_class == StorageClass::HDD) {
 				void* base_ptr = reinterpret_cast<void*>(backend->get_base_address());
 				size_t size = backend->get_total_capacity();
 				if (base_ptr == nullptr || size == 0) {
@@ -212,13 +209,13 @@ ErrorCode WorkerService::initialize() {
 					return ErrorCode::INTERNAL_ERROR;
 				}
 				pool_ucx_reg_[pool_id] = reg;
-				LOG(INFO) << "UCX registered memory pool " << pool_id << ", remote_addr=0x" 
+				LOG(INFO) << "UCX registered " 
+					      << (storage_class == StorageClass::RAM_CPU || storage_class == StorageClass::RAM_GPU ? "memory" : "mmap disk")
+					      << " pool " << pool_id << ", remote_addr=0x" 
 					      << std::hex << reg.remote_addr << std::dec;
 			} else {
-				// Disk-based storage: UCX registration not applicable
-				// Clients will use standard network protocols for disk I/O
-				LOG(INFO) << "Skipping UCX registration for disk-based pool " << pool_id 
-				          << " (storage_class=" << static_cast<int>(storage_class) << ")";
+				LOG(INFO) << "Skipping UCX registration for pool " << pool_id 
+			          << " (storage_class=" << static_cast<int>(storage_class) << ")";
 			}
 		}
 	}

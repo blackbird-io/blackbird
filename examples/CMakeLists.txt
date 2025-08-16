@@ -31,30 +31,6 @@ target_compile_options(benchmark_disk_backends PRIVATE
     ${YAMLCPP_CFLAGS_OTHER}
 )
 
-# Test disk allocation example
-add_executable(test_disk_allocation
-    test_disk_allocation.cpp
-)
-
-target_link_libraries(test_disk_allocation
-    blackbird
-    ${LIBURING_LIBRARIES}
-    glog::glog
-    ${YAMLCPP_LIBRARIES}
-    pthread
-)
-
-target_include_directories(test_disk_allocation PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-    ${LIBURING_INCLUDE_DIRS}
-    ${YAMLCPP_INCLUDE_DIRS}
-)
-
-target_compile_options(test_disk_allocation PRIVATE
-    ${LIBURING_CFLAGS_OTHER}
-    ${YAMLCPP_CFLAGS_OTHER}
-)
-
 # UCX transport benchmark
 add_executable(benchmark_ucx_transports
     benchmark_ucx_transports.cpp
@@ -80,29 +56,6 @@ target_compile_options(benchmark_ucx_transports PRIVATE
 )
 
 
-add_executable(simple_keystone_client
-    simple_keystone_client.cpp
-)
-
-target_link_libraries(simple_keystone_client
-    blackbird
-    ${LIBURING_LIBRARIES}
-    glog::glog
-    ${YAMLCPP_LIBRARIES}
-    pthread
-)
-
-target_include_directories(simple_keystone_client PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-    ${LIBURING_INCLUDE_DIRS}
-    ${YAMLCPP_INCLUDE_DIRS}
-)
-
-target_compile_options(simple_keystone_client PRIVATE
-    ${LIBURING_CFLAGS_OTHER}
-    ${YAMLCPP_CFLAGS_OTHER}
-)
-
 # Worker example
 add_executable(worker_example
     worker_example.cpp
@@ -123,6 +76,30 @@ target_include_directories(worker_example PRIVATE
 )
 
 target_compile_options(worker_example PRIVATE
+    ${LIBURING_CFLAGS_OTHER}
+    ${YAMLCPP_CFLAGS_OTHER}
+)
+
+# Test mmap+RDMA disk backend
+add_executable(test_mmap_disk_backend
+    test_mmap_disk_backend.cpp
+)
+
+target_link_libraries(test_mmap_disk_backend
+    blackbird
+    ${LIBURING_LIBRARIES}
+    glog::glog
+    ${YAMLCPP_LIBRARIES}
+    pthread
+)
+
+target_include_directories(test_mmap_disk_backend PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${LIBURING_INCLUDE_DIRS}
+    ${YAMLCPP_INCLUDE_DIRS}
+)
+
+target_compile_options(test_mmap_disk_backend PRIVATE
     ${LIBURING_CFLAGS_OTHER}
     ${YAMLCPP_CFLAGS_OTHER}
 )

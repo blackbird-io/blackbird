@@ -37,6 +37,9 @@ public:
     std::string start_listener(const std::string& host, uint16_t port);
 
     bool register_memory(void* base_ptr, size_t size, UcxRegInfo& out_info);
+    
+    // Get UCX context for direct registration by backends
+    ucp_context_h get_context() const { return context_; }
 
 private:
     static void conn_request_cb(ucp_conn_request_h request, void* arg);

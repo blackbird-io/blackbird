@@ -42,16 +42,13 @@ public:
     void shutdown() override;
 
 private:
-    // Configuration
     uint64_t capacity_;
     StorageClass storage_class_;
     
-    // Memory management
     void* base_memory_{nullptr};
     uintptr_t base_address_{0};
-    uint32_t rkey_{0}; // Placeholder for future UCX integration
+    uint32_t rkey_{0}; 
     
-    // Allocation tracking
     struct Shard {
         uint64_t offset;
         uint64_t size;
@@ -60,15 +57,12 @@ private:
     };
     
     std::unordered_map<std::string, Shard> reservations_;
-    std::unordered_map<uint64_t, uint64_t> committed_shards_; // remote_addr -> size
     mutable std::mutex mutex_;
     
-    // Stats
     mutable uint64_t used_capacity_{0};
     mutable uint64_t num_reservations_{0};
     mutable uint64_t num_committed_shards_{0};
     
-    // Utilities
     std::mt19937 rng_;
     std::string generate_token_id();
     uint64_t find_free_offset(uint64_t size);
