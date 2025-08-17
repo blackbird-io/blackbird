@@ -14,6 +14,7 @@ set(BLACKBIRD_SOURCES
     common/types.cpp
     allocation/range_allocator.cpp
     allocation/keystone_allocator_adapter.cpp
+    client/blackbird_client.cpp
 )
 
 # Build the main blackbird library
