@@ -64,7 +64,9 @@ Result<bool> BlackbirdClient::object_exists(const ObjectKey &key) {
     if (!result.has_value()) {
         return ErrorCode::NETWORK_ERROR; // Transport level failure
     }
-
+    if (result->error_code != ErrorCode::OK) {
+        return result->error_code;
+    }
     return result->exists; // unwrap struct
 }
 

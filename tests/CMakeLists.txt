@@ -25,6 +25,10 @@ target_include_directories(blackbird_tests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
 )
 
+target_compile_definitions(blackbird_tests PRIVATE
+  BLACKBIRD_TEST
+)
+
 target_link_libraries(blackbird_tests PRIVATE
   blackbird
   GTest::gtest

@@ -125,6 +125,16 @@ private:
     };
 
     static thread_local RpcCacheEntry tls_rpc_;
+
+#ifdef BLACKBIRD_TEST
+public:
+    // Test-only helper to inject a pre-constructed RPC client into the
+    // thread-local cache and mark it as connected.
+    static void inject_rpc_for_test(RpcClientPtr ptr) {
+        tls_rpc_.client = std::move(ptr);
+        tls_rpc_.connected = true;
+    }
+#endif
 };
 
 } // namespace blackbird
