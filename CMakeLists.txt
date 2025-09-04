@@ -17,7 +17,7 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 
 add_compile_definitions(GLOG_NO_ABBREVIATED_SEVERITIES)
 
-# Find packages
+# Find packages - core dependencies for high-performance distributed storage
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -39,6 +39,7 @@ pkg_check_modules(LIBURING REQUIRED liburing)
 
 include(FetchContent)
 
+# YLT provides high-performance RPC framework for client-server communication
 FetchContent_Declare(
   yalantinglibs
   GIT_REPOSITORY      https://github.com/alibaba/yalantinglibs.git
