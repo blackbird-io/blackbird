@@ -118,6 +118,7 @@ print_status "Worker Memory: $(($WORKER_MEMORY_SIZE / 1024 / 1024))MB"
 
 print_status "Starting etcd on port $ETCD_PORT..."
 
+# Verify etcd installation - required for service discovery and coordination
 if ! command -v etcd &> /dev/null; then
     print_error "etcd is not installed. Please install etcd first:"
     print_error "  Ubuntu: sudo apt install etcd"
