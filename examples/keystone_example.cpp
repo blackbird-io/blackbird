@@ -1,3 +1,4 @@
+// Demonstrates complete keystone service setup with etcd integration and RPC server
 #include <iostream>
 #include <string>
 #include <signal.h>
