@@ -1,3 +1,4 @@
+// Core keystone service implementation - manages object metadata, worker placement, and cluster coordination
 #include "blackbird/keystone/keystone_service.h"
 
 #include <glog/logging.h>
