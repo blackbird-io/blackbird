@@ -14,7 +14,7 @@ keystone:
   enable_ha: false
   enable_gc: true
   
-  # Performance Tuning
+  # Performance Tuning - controls memory pressure and eviction behavior
   eviction_ratio: 0.1
   high_watermark: 0.8
   
