@@ -1,3 +1,4 @@
+// Core type definitions for Blackbird distributed storage system
 #pragma once
 
 #include <cstdint>
