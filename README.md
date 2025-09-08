@@ -1,4 +1,4 @@
-# Blackbird: High-Performance Distributed Storage Cache
+# NorthFS: High-Performance Distributed Storage System
 
 Blackbird is a high-performance, multi-tiered distributed storage cache system designed for modern applications requiring fast, scalable data access. Built on UCX (Unified Communication X) for optimal RDMA performance, Blackbird provides intelligent data placement across memory and storage tiers.
 
