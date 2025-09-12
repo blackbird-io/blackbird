@@ -1,6 +1,6 @@
-# NorthFS: High-Performance Distributed Storage System
+# Blackbird: High-Performance Distributed Storage System
 
-NorthFS is a high-performance, multi-tiered distributed storage cache system designed for modern applications requiring fast, scalable data access. Built on UCX (Unified Communication X) for optimal RDMA performance, NorthFS provides intelligent data placement across memory and storage tiers.
+Blackbird is a high-performance, multi-tiered distributed storage cache system designed for modern applications requiring fast, scalable data access. Built on UCX (Unified Communication X) for optimal RDMA performance, Blackbird provides intelligent data placement across memory and storage tiers.
 
 ## Key Features
 
@@ -15,7 +15,7 @@ NorthFS is a high-performance, multi-tiered distributed storage cache system des
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   NorthFS     │    │   NorthFS     │    │   NorthFS     │
+│   Blackbird     │    │   Blackbird     │    │   Blackbird     │
 │   Client        │    │   Client        │    │   Client        │
 │                 │    │                 │    │                 │
 │ ┌─────────────┐ │    │ ┌─────────────┐ │    │ ┌─────────────┐ │
@@ -28,7 +28,7 @@ NorthFS is a high-performance, multi-tiered distributed storage cache system des
           └──────────────────────┼──────────────────────┘
                                  │
                    ┌─────────────┴───────────┐
-                   │   NorthFS Keystone    │
+                   │   Blackbird Keystone    │
                    │                         │
                    │ ┌─────────────────────┐ │
                    │ │ Object Metadata     │ │
@@ -99,8 +99,8 @@ NorthFS is a high-performance, multi-tiered distributed storage cache system des
 
 2. **Clone and Build**:
    ```bash
-   git clone <NorthFS-repo>
-   cd NorthFS
+   git clone <Blackbird-repo>
+   cd Blackbird
    mkdir build && cd build
    cmake -DCMAKE_BUILD_TYPE=Release ..
    make -j$(nproc)
@@ -134,7 +134,7 @@ NorthFS is a high-performance, multi-tiered distributed storage cache system des
 
 ```json
 {
-  "cluster_id": "NorthFS_cluster",
+  "cluster_id": "Blackbird_cluster",
   "etcd_endpoints": "localhost:2379",
   "listen_address": "0.0.0.0:9090",
   "http_metrics_port": "9091",
@@ -154,7 +154,7 @@ NorthFS is a high-performance, multi-tiered distributed storage cache system des
   "keystone_address": "localhost:9090",
   "local_address": "0.0.0.0:0",
   "memory_pool_size": 1073741824,
-  "storage_path": "/tmp/NorthFS"
+  "storage_path": "/tmp/Blackbird"
 }
 ```
 
@@ -233,8 +233,8 @@ if (is_ok(stats)) {
 ## Project Structure
 
 ```
-NorthFS/
-├── include/NorthFS/          # Public headers
+Blackbird/
+├── include/Blackbird/          # Public headers
 │   ├── types.h                 # Core types and configuration
 │   ├── keystone_service.h      # Keystone service
 │   ├── rpc_service.h           # RPC service wrapper
@@ -287,7 +287,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Comparison with Other Systems
 
-| Feature | NorthFS | Redis Cluster | Memcached | Alluxio |
+| Feature | Blackbird | Redis Cluster | Memcached | Alluxio |
 |---------|-----------|---------------|-----------|---------|
 | RDMA Support | ✅ Native | ❌ | ❌ | ⚠️ Limited |
 | Multi-tier | ✅ | ❌ | ❌ | ✅ |
