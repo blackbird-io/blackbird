@@ -1,17 +1,25 @@
-# Blackbird: High-Performance Distributed Storage System
+# Blackbird
 
-Blackbird is a high-performance, multi-tiered distributed storage cache system designed for modern applications requiring fast, scalable data access. Built on UCX (Unified Communication X) for optimal RDMA performance, Blackbird provides intelligent data placement across memory and storage tiers.
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]() [![License: MIT](https://img.shields.io/badge/license-MIT-blue)]() [![C++20](https://img.shields.io/badge/language-C++20-lightgrey)]()
 
-## Key Features
+**Blackbird** is a **high-performance, multi-tiered distributed storage cache** for large-scale systems. It delivers **ultra-low latency** via UCX (RDMA), **intelligent tiering** across GPU/CPU/NVMe, and **automatic failover** with etcd.
 
-- **High Performance**: Leverages UCX for low-latency RDMA communication
-- **Multi-Tiered Storage**: Intelligent placement across GPU memory, CPU memory, and NVMe storage
-- **High Availability**: Keystone election and failover support
-- **Worker Placement**: Sophisticated placement algorithms for optimal performance
-- **Etcd Integration**: Distributed coordination and service discovery
-- **Batch Operations**: High-throughput batch API support
+**Use cases:** HPC & ML training/inference pipelines, realtime analytics, feature stores, and metadata-heavy services where Redis/Memcached lack tiering or RDMA, and Alluxio is too heavyweight.
 
-## Architecture
+---
+
+## ✨ Key Features
+
+- **RDMA-first performance:** UCX (RoCE/InfiniBand) with TCP fallback; zero-copy fast path  
+- **Tiered caching:** GPU memory → CPU DRAM → NVMe; policy-driven placement and eviction  
+- **High availability:** Keystone control-plane with leader election & failover (etcd)  
+- **Placement engine:** Topology-aware worker selection & load balancing  
+- **Batch APIs:** High-throughput batched puts/gets/exists  
+- **Observability:** Prometheus-style `/metrics`, health, and cluster stats
+
+---
+
+## 🚀 Architecture
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
@@ -24,117 +32,94 @@ Blackbird is a high-performance, multi-tiered distributed storage cache system d
 │ └─────────────┘ │    │ └─────────────┘ │    │ └─────────────┘ │
 └─────────┬───────┘    └─────────┬───────┘    └─────────┬───────┘
           │                      │                      │
-          │                      │                      │
-          └──────────────────────┼──────────────────────┘
-                                 │
-                   ┌─────────────┴───────────┐
-                   │   Blackbird Keystone    │
-                   │                         │
-                   │ ┌─────────────────────┐ │
-                   │ │ Object Metadata     │ │
-                   │ │ Manager             │ │
-                   │ └─────────────────────┘ │
-                   │ ┌─────────────────────┐ │
-                   │ │ Worker Placement    │ │
-                   │ │ Engine              │ │
-                   │ └─────────────────────┘ │
-                   │ ┌─────────────────────┐ │
-                   │ │ Client Health       │ │
-                   │ │ Monitor             │ │
-                   │ └─────────────────────┘ │
-                   └─────────────┬───────────┘
-                                 │
-                    ┌────────────┴────────────┐
-                    │      etcd Cluster       │
-                    │   (Service Discovery    │
-                    │   & Coordination)       │
-                    └─────────────────────────┘
+          └───────────────┬──────┴───────────────┬──────┘
+                          │                      │
+                   ┌──────┴──────────────────────┴──────┐
+                   │            Keystone (HA)           │
+                   │  • Object Metadata Manager         │
+                   │  • Worker Placement Engine         │
+                   │  • Client Health Monitor           │
+                   │  • Garbage Collector               │
+                   └───────────────────┬────────────────┘
+                                       │
+                           ┌───────────┴────────────┐
+                           │       etcd Cluster     │
+                           │ • Discovery            │
+                           │ • Leader Election      │
+                           │ • Config Store         │
+                           └────────────────────────┘
 ```
 
-## Core Components
+---
 
-### 1. Keystone Service
-- **Object Metadata Management**: Tracks object locations and worker status
-- **Worker Placement**: Intelligent placement of workers across nodes
-- **Client Health Monitoring**: Monitors client health and handles failures
-- **Garbage Collection**: Automatic cleanup of expired objects
-- **Load Balancing**: Distributes load across available nodes
+## 📦 Core Components
 
-### 2. Etcd Integration
-- **Service Discovery**: Automatic discovery of cluster nodes
-- **Leader Election**: High availability through master election
-- **Configuration Management**: Distributed configuration storage
-- **Health Monitoring**: Cluster-wide health status tracking
+### Keystone (control plane)
+- Object metadata & locations; worker liveness/status  
+- Placement & load balancing; admission control  
+- Client/session tracking; automatic failure handling  
+- TTL/GC of objects; eviction coordination
 
-### 3. UCX Communication Layer
-- **RDMA Support**: Direct memory access for ultra-low latency
-- **Multiple Transports**: TCP, InfiniBand, RoCE, and more
-- **Zero-copy Operations**: Minimal CPU overhead for data transfers
-- **Scalable**: Supports large-scale deployments
+### Clients/Workers (data plane)
+- UCX endpoints; registered memory for RDMA  
+- Local tier managers (GPU/DRAM/NVMe) with pluggable policies  
+- Background compaction/defragmentation (future)
 
-## Getting Started
+### etcd Integration
+- Service discovery & registration  
+- Leader election for Keystone HA  
+- Distributed configuration and health registry
+
+---
+
+## 🧭 Why Blackbird?
+
+- **Performance ceiling:** UCX+RDMA and zero-copy paths avoid kernel TCP overhead.  
+- **Cost & scale:** Tiering lets you mix fast/cheap media and still hit SLOs.  
+- **Simplicity:** Minimal control plane with well-defined APIs; easy to embed.
+
+---
+
+## ⚡ Quick Start
 
 ### Prerequisites
+- **C++20** compiler (GCC ≥10 or Clang ≥12)  
+- **CMake ≥3.20**  
+- **UCX ≥1.12**  
+- **etcd ≥3.4**  
+- Libraries: `glog`, `nlohmann/json`, [yaLanTingLibs](https://github.com/alibaba/yalantinglibs)
 
-- **C++20 compatible compiler** (GCC 10+, Clang 12+)
-- **CMake 3.20+**
-- **UCX library** (1.12+)
-- **etcd cluster** (3.4+)
-- **glog** for logging
-- **nlohmann/json** for JSON support
-- **yaLanTingLibs (YLT)** for RPC framework
-
-### Installation
-
-1. **Install Dependencies**:
-   ```bash
-   # Ubuntu/Debian
-   sudo apt-get update
-   sudo apt-get install cmake build-essential libgoogle-glog-dev nlohmann-json3-dev
-   
-   # Install UCX (from source or package manager)
-   # Install etcd
-   # Install YLT (yaLanTingLibs)
-   ```
-
-2. **Clone and Build**:
-   ```bash
-   git clone <Blackbird-repo>
-   cd Blackbird
-   mkdir build && cd build
-   cmake -DCMAKE_BUILD_TYPE=Release ..
-   make -j$(nproc)
-   ```
-
-3. **Install** (optional):
-   ```bash
-   sudo make install
-   ```
-
-### Quick Start
-
-1. **Start etcd** (if not already running):
-   ```bash
-   etcd --listen-client-urls http://localhost:2379 \
-        --advertise-client-urls http://localhost:2379
-   ```
-
-2. **Start Keystone**:
+### Build from Source
 ```bash
-./examples/keystone_example --etcd-endpoints localhost:2379
+git clone https://github.com/<your-org>/blackbird.git
+cd blackbird
+mkdir build && cd build
+cmake -DCMAKE_BUILD_TYPE=Release ..
+make -j"$(nproc)"
+sudo make install # optional
 ```
 
-3. **The keystone will**:
-   - Connect to etcd for coordination
-   - Start RPC server on port 9090
-   - Start HTTP metrics server on port 9091
-   - Begin accepting worker and client connections
+### Run Example
+```bash
+# 1) Start etcd
+etcd --listen-client-urls http://localhost:2379 \
+     --advertise-client-urls http://localhost:2379
 
-### Keystone Configuration
+# 2) Start Keystone (example)
+./examples/keystone_example --etcd-endpoints localhost:2379
+# Keystone:
+#  - RPC: :9090
+#  - Metrics (Prometheus): :9091/metrics
+```
 
+---
+
+## ⚙️ Configuration
+
+### Keystone (JSON)
 ```json
 {
-  "cluster_id": "Blackbird_cluster",
+  "cluster_id": "blackbird_cluster",
   "etcd_endpoints": "localhost:2379",
   "listen_address": "0.0.0.0:9090",
   "http_metrics_port": "9091",
@@ -146,100 +131,85 @@ Blackbird is a high-performance, multi-tiered distributed storage cache system d
 }
 ```
 
-### Client Configuration
-
+### Client (JSON)
 ```json
 {
   "node_id": "client-001",
   "keystone_address": "localhost:9090",
   "local_address": "0.0.0.0:0",
   "memory_pool_size": 1073741824,
-  "storage_path": "/tmp/Blackbird"
+  "storage_path": "/tmp/blackbird"
 }
 ```
 
-## API Overview
+---
 
-### Core Operations
+## 🧪 API Overview (C++)
+
 ```cpp
-// Check if object exists
+// Existence
 auto exists = keystone_service->object_exists("my_key");
 
-// Get worker placements for an object
+// Worker lookup
 auto workers = keystone_service->get_workers("my_key");
 
-// Start a put operation
-auto allocated_workers = keystone_service->put_start("my_key", data_size, worker_config);
+// Put workflow
+auto placements = keystone_service->put_start("my_key", data_size, worker_config);
+// ... perform UCX transfers to placements ...
+auto ok = keystone_service->put_complete("my_key");
 
-// Complete the put operation
-auto result = keystone_service->put_complete("my_key");
+// Remove
+auto removed = keystone_service->remove_object("my_key");
 
-// Remove an object
-auto result2 = keystone_service->remove_object("my_key");
-
-### Batch Operations
-
-```cpp
-// Batch existence check
-auto results = keystone_service->batch_object_exists(keys);
-
-// Batch get workers
-auto worker_results = keystone_service->batch_get_workers(keys);
-
-// Batch put operations
-auto put_results = keystone_service->batch_put_start(keys, sizes, config);
+// Batch ops
+auto ex = keystone_service->batch_object_exists(keys);
+auto w  = keystone_service->batch_get_workers(keys);
+auto ps = keystone_service->batch_put_start(keys, sizes, config);
 ```
 
-## Data Models
+**Data model basics**
+- **Key:** string identifier  
+- **Placements:** one-or-more workers per key (policy-driven)  
+- **TTL:** optional expiry; **Soft pin:** opt-out of eviction  
+- **UCX fields:** endpoint addresses, rkeys, region descriptors
 
-### Object Storage
-- **Keys**: String-based object identifiers
-- **Workers**: One or more placements per key with configurable policies
-- **TTL**: Automatic expiration support
-- **Soft Pinning**: Protection from eviction
+---
 
-### UCX Integration
-- **Remote Memory Access**: Direct RDMA operations
-- **Worker Addresses**: UCX endpoint identification
-- **Remote Keys**: RDMA memory registration keys
-- **Zero-copy Transfers**: Efficient data movement
+## 📊 Monitoring & Health
 
-## Monitoring
-
-### Metrics Endpoint
-Access cluster metrics via HTTP:
 ```bash
-curl http://localhost:9091/metrics
+# Prometheus metrics
+curl -s http://localhost:9091/metrics | head -n 50
 ```
 
-### Cluster Statistics
+Programmatic stats:
 ```cpp
 auto stats = keystone_service->get_cluster_stats();
 if (is_ok(stats)) {
-    auto cluster_stats = get_value(stats);
-    std::cout << "Active clients: " << cluster_stats.active_clients << std::endl;
-    std::cout << "Total objects: " << cluster_stats.total_objects << std::endl;
-    std::cout << "Utilization: " << (cluster_stats.utilization * 100) << "%" << std::endl;
+  auto s = get_value(stats);
+  std::cout << "Active clients: " << s.active_clients << "\n";
+  std::cout << "Total objects:  " << s.total_objects << "\n";
+  std::cout << "Utilization:    " << (s.utilization * 100) << "%\n";
 }
 ```
 
-### Health Checks
-- **Client Heartbeats**: Regular ping operations
-- **Chunk Monitoring**: Memory chunk health
-- **Automatic Recovery**: Failed client cleanup
+Health signals:
+- Client heartbeats & TTL expiry  
+- Worker liveness & chunk health  
+- Automatic recovery & cleanup of orphaned placements
 
-## Development
+---
 
-## Project Structure
+## 🧱 Project Structure
 
 ```
 Blackbird/
 ├── include/Blackbird/          # Public headers
-│   ├── types.h                 # Core types and configuration
-│   ├── keystone_service.h      # Keystone service
+│   ├── types.h                 # Core types & config
+│   ├── keystone_service.h      # Keystone control plane
 │   ├── rpc_service.h           # RPC service wrapper
-│   └── etcd_service.h          # Etcd integration
-├── src/                        # Implementation files
+│   └── etcd_service.h          # etcd integration
+├── src/                        # Implementations
 │   ├── types.cpp
 │   ├── keystone_service.cpp
 │   ├── rpc_service.cpp
@@ -251,51 +221,71 @@ Blackbird/
 └── CMakeLists.txt
 ```
 
-### Building Tests
+### Build & Run Tests
 ```bash
-cmake -DBUILD_TESTS=ON ..
-make -j$(nproc)
-ctest
+cmake -S . -B build -DBUILD_TESTS=ON
+cmake --build build -j"$(nproc)"
+cd build && ctest --output-on-failure
 ```
 
-## Performance Characteristics
+---
 
-- **Latency**: Sub-microsecond for RDMA operations
-- **Throughput**: Limited by network bandwidth
-- **Scalability**: Supports 100+ node clusters
-- **Memory Efficiency**: Zero-copy operations
-- **CPU Overhead**: Minimal due to RDMA offload
+## 📈 Performance (early)
 
-## Roadmap
+- **Latency:** sub-microsecond fast path (RDMA)  
+- **Throughput:** scales with network bandwidth & NICs  
+- **Scalability:** 100+ nodes (Keystone HA via etcd)  
+- **CPU:** minimal due to RDMA offload & zero-copy
 
-- [ ] **Phase 1**: Complete keystone service implementation
-- [ ] **Phase 2**: Client library with UCX integration
-- [ ] **Phase 3**: Storage backend implementation
-- [ ] **Phase 4**: Advanced features (compression, encryption)
-- [ ] **Phase 5**: Performance optimizations and benchmarks
+> Benchmarks & reproducible harness: coming with v0.2 (see Roadmap).
 
-## Contributing
+---
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes with tests
-4. Submit a pull request
+## 🔭 Roadmap
 
-## License
+- [ ] **v0.1:** Keystone MVP, basic client SDK, Prometheus metrics  
+- [ ] **v0.2:** UCX client library GA, placement policies, benchmark suite  
+- [ ] **v0.3:** Tier managers (GPU/DRAM/NVMe) + compaction/defrag  
+- [ ] **v0.4:** Security (mTLS), ACLs, encryption-at-rest/in-flight  
+- [ ] **v1.0:** Stability, perf tuning, operability hardening
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+---
 
-## Comparison with Other Systems
+## 🔍 Comparison
 
-| Feature | Blackbird | Redis Cluster | Memcached | Alluxio |
-|---------|-----------|---------------|-----------|---------|
-| RDMA Support | ✅ Native | ❌ | ❌ | ⚠️ Limited |
-| Multi-tier | ✅ | ❌ | ❌ | ✅ |
-| Service Discovery | ✅ etcd | ⚠️ Manual | ❌ | ✅ |
-| High Availability | ✅ | ✅ | ❌ | ✅ |
-| Language | C++20 | C | C | Java/Scala |
-| Memory Efficiency | ✅ Zero-copy | ❌ | ⚠️ | ❌ |
+| Feature            | Blackbird | Redis Cluster | Memcached | Alluxio |
+|--------------------|-----------|---------------|-----------|---------|
+| RDMA Support       | ✅ Native | ❌            | ❌        | ⚠️ Limited |
+| Multi-tier Caching | ✅        | ❌            | ❌        | ✅       |
+| Service Discovery  | ✅ etcd   | ⚠️ Manual     | ❌        | ✅       |
+| High Availability  | ✅        | ✅            | ❌        | ✅       |
+| Language           | C++20     | C             | C         | Java/Scala |
 
-## Contact
+---
 
-For questions, issues, or contributions, please use the project's issue tracker or contact the maintainers. 
+## 🛡 Security & Production Notes
+
+- **Status:** Alpha; APIs subject to change prior to v1.0  
+- **Networking:** Prefer RoCEv2/IB; fallback TCP supported  
+- **Auth:** mTLS & ACLs planned (see Roadmap v0.4)  
+- **Data at rest:** Per-tier encryption planned; verify filesystem/NVMe settings
+
+---
+
+## 🤝 Contributing
+
+We welcome issues and PRs.
+
+1. Fork the repo  
+2. Create a branch: `git checkout -b feature/awesome`  
+3. Add tests & docs  
+4. `clang-format`/`cppcheck` if available  
+5. Open a PR
+
+See `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` (coming soon).
+
+---
+
+## 📜 License
+
+MIT — see [LICENSE](LICENSE).
