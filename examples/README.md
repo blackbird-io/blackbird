@@ -26,7 +26,7 @@ Usage:
 ./build/examples/benchmark_disk_backends
 ```
 
-### test_disk_allocation
+### test_disk_allocation (No longer used)
 
 Simple test program demonstrating disk-based storage allocation.
 
