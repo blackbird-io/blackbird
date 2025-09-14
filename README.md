@@ -1,4 +1,4 @@
-# Blackbird
+# Blackbird: High-Performance Distributed Storage System
 
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]() [![License: MIT](https://img.shields.io/badge/license-MIT-blue)]() [![C++20](https://img.shields.io/badge/language-C++20-lightgrey)]()
 
