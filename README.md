@@ -2,6 +2,8 @@
 
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]() [![License: MIT](https://img.shields.io/badge/license-MIT-blue)]() [![C++20](https://img.shields.io/badge/language-C++20-lightgrey)]()
 
+Make GPU inference and training 4x fast!
+
 **Blackbird** is a **high-performance, multi-tiered distributed storage cache** for large-scale systems. It delivers **ultra-low latency** via UCX (RDMA), **intelligent tiering** across GPU/CPU/NVMe, and **automatic failover** with etcd.
 
 **Use cases:** HPC & ML training/inference pipelines, realtime analytics, feature stores, and metadata-heavy services where Redis/Memcached lack tiering or RDMA, and Alluxio is too heavyweight.
