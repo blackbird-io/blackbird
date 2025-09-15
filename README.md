@@ -91,7 +91,7 @@
 
 ### Build from Source
 ```bash
-git clone https://github.com/<your-org>/blackbird.git
+git clone https://github.com/blackbird-io/blackbird.git
 cd blackbird
 mkdir build && cd build
 cmake -DCMAKE_BUILD_TYPE=Release ..
