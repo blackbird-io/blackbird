@@ -6,7 +6,7 @@
 
 # Blackbird: High-Performance RDMA based Distributed Storage System
 
-GPU inference and training 4x fast. **Blackbird** is a **high-performance, multi-tiered distributed storage cache** for large-scale systems. It delivers **ultra-low latency** via UCX (RDMA), **intelligent tiering** across GPU/CPU/NVMe, and **automatic failover** with etcd.
+Blackbird draws inspiration from [Microsoft/FARM](https://www.microsoft.com/en-us/research/project/farm/) and RDMA based KV store among other projects. It also takes cues from Redis for its simplicity and ubiquity. It delivers intelligent data placement, enabling applications to seamlessly offload data to a high-performance tiered system managing placement and latency for you.
 
 **Use cases:** HPC & ML training/inference pipelines, realtime analytics, feature stores, and metadata-heavy services where Redis/Memcached lack tiering or RDMA, and Alluxio is too heavyweight.
 
