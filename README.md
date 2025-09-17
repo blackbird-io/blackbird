@@ -42,36 +42,6 @@ etcd --listen-client-urls http://localhost:2379 \
 
 ---
 
-## ⚙️ Configuration
-
-### Keystone (JSON)
-```json
-{
-  "cluster_id": "blackbird_cluster",
-  "etcd_endpoints": "localhost:2379",
-  "listen_address": "0.0.0.0:9090",
-  "http_metrics_port": "9091",
-  "enable_gc": true,
-  "enable_ha": true,
-  "eviction_ratio": 0.1,
-  "high_watermark": 0.9,
-  "client_ttl_sec": 10
-}
-```
-
-### Client (JSON)
-```json
-{
-  "node_id": "client-001",
-  "keystone_address": "localhost:9090",
-  "local_address": "0.0.0.0:0",
-  "memory_pool_size": 1073741824,
-  "storage_path": "/tmp/blackbird"
-}
-```
-
----
-
 ## 🧪 API Overview (C++)
 
 ```cpp
@@ -145,8 +115,6 @@ Health signals:
 - Service discovery & registration  
 - Leader election for Keystone HA  
 - Distributed configuration and health registry
-
-## ⚡ Quick Start
 
 ### Prerequisites
 - **C++20** compiler (GCC ≥10 or Clang ≥12)  
