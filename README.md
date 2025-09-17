@@ -26,77 +26,6 @@ Blackbird draws inspiration from [Microsoft/FARM](https://www.microsoft.com/en-u
 - **Batch APIs:** High-throughput batched puts/gets/exists  
 - **Observability:** Prometheus-style `/metrics`, health, and cluster stats
 
----
-
-## Architecture
-
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Blackbird     │    │   Blackbird     │    │   Blackbird     │
-│   Client        │    │   Client        │    │   Client        │
-│                 │    │                 │    │                 │
-│ ┌─────────────┐ │    │ ┌─────────────┐ │    │ ┌─────────────┐ │
-│ │ UCX Memory  │ │    │ │ UCX Memory  │ │    │ │ UCX Memory  │ │
-│ │ Pool        │ │    │ │ Pool        │ │    │ │ Pool        │ │
-│ └─────────────┘ │    │ └─────────────┘ │    │ └─────────────┘ │
-└─────────┬───────┘    └─────────┬───────┘    └─────────┬───────┘
-          │                      │                      │
-          └───────────────┬──────┴───────────────┬──────┘
-                          │                      │
-                   ┌──────┴──────────────────────┴──────┐
-                   │            Keystone (HA)           │
-                   │  • Object Metadata Manager         │
-                   │  • Worker Placement Engine         │
-                   │  • Client Health Monitor           │
-                   │  • Garbage Collector               │
-                   └───────────────────┬────────────────┘
-                                       │
-                           ┌───────────┴────────────┐
-                           │       etcd Cluster     │
-                           │ • Discovery            │
-                           │ • Leader Election      │
-                           │ • Config Store         │
-                           └────────────────────────┘
-```
-
----
-
-## 📦 Core Components
-
-### Keystone (control plane)
-- Object metadata & locations; worker liveness/status  
-- Placement & load balancing; admission control  
-- Client/session tracking; automatic failure handling  
-- TTL/GC of objects; eviction coordination
-
-### Clients/Workers (data plane)
-- UCX endpoints; registered memory for RDMA  
-- Local tier managers (GPU/DRAM/NVMe) with pluggable policies  
-- Background compaction/defragmentation (future)
-
-### etcd Integration
-- Service discovery & registration  
-- Leader election for Keystone HA  
-- Distributed configuration and health registry
-
-## ⚡ Quick Start
-
-### Prerequisites
-- **C++20** compiler (GCC ≥10 or Clang ≥12)  
-- **CMake ≥3.20**  
-- **UCX ≥1.12**  
-- **etcd ≥3.4**  
-- Libraries: `glog`, `nlohmann/json`, [yaLanTingLibs](https://github.com/alibaba/yalantinglibs)
-
-### Build from Source
-```bash
-git clone https://github.com/blackbird-io/blackbird.git
-cd blackbird
-mkdir build && cd build
-cmake -DCMAKE_BUILD_TYPE=Release ..
-make -j"$(nproc)"
-sudo make install # optional
-```
 
 ### Run Example
 ```bash
@@ -199,26 +128,43 @@ Health signals:
 
 ---
 
-## 🧱 Project Structure
+## 📦 Core Components
 
+### Keystone (control plane)
+- Object metadata & locations; worker liveness/status  
+- Placement & load balancing; admission control  
+- Client/session tracking; automatic failure handling  
+- TTL/GC of objects; eviction coordination
+
+### Clients/Workers (data plane)
+- UCX endpoints; registered memory for RDMA  
+- Local tier managers (GPU/DRAM/NVMe) with pluggable policies  
+- Background compaction/defragmentation (future)
+
+### etcd Integration
+- Service discovery & registration  
+- Leader election for Keystone HA  
+- Distributed configuration and health registry
+
+## ⚡ Quick Start
+
+### Prerequisites
+- **C++20** compiler (GCC ≥10 or Clang ≥12)  
+- **CMake ≥3.20**  
+- **UCX ≥1.12**  
+- **etcd ≥3.4**  
+- Libraries: `glog`, `nlohmann/json`, [yaLanTingLibs](https://github.com/alibaba/yalantinglibs)
+
+### Build from Source
+```bash
+git clone https://github.com/blackbird-io/blackbird.git
+cd blackbird
+mkdir build && cd build
+cmake -DCMAKE_BUILD_TYPE=Release ..
+make -j"$(nproc)"
+sudo make install # optional
 ```
-Blackbird/
-├── include/Blackbird/          # Public headers
-│   ├── types.h                 # Core types & config
-│   ├── keystone_service.h      # Keystone control plane
-│   ├── rpc_service.h           # RPC service wrapper
-│   └── etcd_service.h          # etcd integration
-├── src/                        # Implementations
-│   ├── types.cpp
-│   ├── keystone_service.cpp
-│   ├── rpc_service.cpp
-│   ├── etcd_service.cpp
-│   └── error/                  # Error handling
-├── examples/                   # Usage examples
-│   └── setup_example.cpp
-├── proto/                      # Protocol buffer definitions
-└── CMakeLists.txt
-```
+
 
 ### Build & Run Tests
 ```bash
