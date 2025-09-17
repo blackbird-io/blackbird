@@ -79,16 +79,6 @@ Blackbird draws inspiration from [Microsoft/FARM](https://www.microsoft.com/en-u
 - Leader election for Keystone HA  
 - Distributed configuration and health registry
 
----
-
-## 🧭 Why Blackbird?
-
-- **Performance ceiling:** UCX+RDMA and zero-copy paths avoid kernel TCP overhead.  
-- **Cost & scale:** Tiering lets you mix fast/cheap media and still hit SLOs.  
-- **Simplicity:** Minimal control plane with well-defined APIs; easy to embed.
-
----
-
 ## ⚡ Quick Start
 
 ### Prerequisites
@@ -237,19 +227,6 @@ cmake --build build -j"$(nproc)"
 cd build && ctest --output-on-failure
 ```
 
----
-
-## 📈 Performance (early)
-
-- **Latency:** sub-microsecond fast path (RDMA)  
-- **Throughput:** scales with network bandwidth & NICs  
-- **Scalability:** 100+ nodes (Keystone HA via etcd)  
-- **CPU:** minimal due to RDMA offload & zero-copy
-
-> Benchmarks & reproducible harness: coming with v0.2 (see Roadmap).
-
----
-
 ## 🔭 Roadmap
 
 - [ ] **v0.1:** Keystone MVP, basic client SDK, Prometheus metrics  
@@ -270,24 +247,13 @@ cd build && ctest --output-on-failure
 | High Availability  | ✅        | ✅            | ❌        | ✅       |
 | Language           | C++20     | C             | C         | Java/Scala |
 
----
-
-## 🛡 Security & Production Notes
-
-- **Status:** Alpha; APIs subject to change prior to v1.0  
-- **Networking:** Prefer RoCEv2/IB; fallback TCP supported  
-- **Auth:** mTLS & ACLs planned (see Roadmap v0.4)  
-- **Data at rest:** Per-tier encryption planned; verify filesystem/NVMe settings
-
----
-
 ## 🤝 Contributing
 
 We welcome issues and PRs.
 
 1. Fork the repo  
 2. Create a branch: `git checkout -b feature/awesome`  
-3. Add tests & docs  
+3. Add your feature.
 4. `clang-format`/`cppcheck` if available  
 5. Open a PR
 
