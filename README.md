@@ -1,6 +1,10 @@
-# Blackbird: High-Performance RDMA based Distributed Storage System
+<p align="center">
+  <img src="assets/logo.svg" alt="Blackbird Logo" width="1500"/>
+</p>
 
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]() [![License: MIT](https://img.shields.io/badge/license-MIT-blue)]() [![C++20](https://img.shields.io/badge/language-C++20-lightgrey)]()
+
+# Blackbird: High-Performance RDMA based Distributed Storage System
 
 GPU inference and training 4x fast. **Blackbird** is a **high-performance, multi-tiered distributed storage cache** for large-scale systems. It delivers **ultra-low latency** via UCX (RDMA), **intelligent tiering** across GPU/CPU/NVMe, and **automatic failover** with etcd.
 
