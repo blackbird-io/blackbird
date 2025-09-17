@@ -6,7 +6,10 @@
 
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]() [![License: MIT](https://img.shields.io/badge/license-MIT-blue)]() [![C++20](https://img.shields.io/badge/language-C++20-lightgrey)]()
 
-# Blackbird: High-Performance RDMA based Distributed Storage System
+# Blackbird
+
+**A High-Performance RDMA based Distributed Storage System.**
+<br>
 
 Blackbird draws inspiration from [Microsoft/FARM](https://www.microsoft.com/en-us/research/project/farm/) and RDMA based KV store among other projects. It also takes cues from Redis for its simplicity and ubiquity. It delivers intelligent data placement, enabling applications to seamlessly offload data to a high-performance tiered system managing placement and latency for you.
 
