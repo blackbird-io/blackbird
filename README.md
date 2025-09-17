@@ -1,8 +1,11 @@
 <p align="center">
   <img src="assets/logo.svg" alt="Blackbird Logo" width="2000"/>
 </p>
+<br>
 
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]() [![License: MIT](https://img.shields.io/badge/license-MIT-blue)]() [![C++20](https://img.shields.io/badge/language-C++20-lightgrey)]()
+
+<br>
 
 # Blackbird: High-Performance RDMA based Distributed Storage System
 
