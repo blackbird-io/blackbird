@@ -4,7 +4,7 @@
 </p>
 <br>
 
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]() [![License: MIT](https://img.shields.io/badge/license-MIT-blue)]() [![C++20](https://img.shields.io/badge/language-C++20-lightgrey)]()
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]() [![License: Apache 2.0]([https://img.shields.io/badge/license-MIT-blue](https://img.shields.io/badge/License-Apache_2.0-blue.svg))]() [![C++20](https://img.shields.io/badge/language-C++20-lightgrey)]()
 
 # Blackbird
 
