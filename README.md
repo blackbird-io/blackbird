@@ -177,4 +177,4 @@ See `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` (coming soon).
 
 ## 📜 License
 
-MIT — see [LICENSE](LICENSE).
+Apache - see [LICENSE](LICENSE).
