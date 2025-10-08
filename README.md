@@ -17,7 +17,7 @@ Blackbird draws inspiration from [Microsoft/FARM](https://www.microsoft.com/en-u
 
 ---
 
-## ✨ Key Features
+## Key Features
 
 - **RDMA-first performance:** UCX (RoCE/InfiniBand) with TCP fallback; zero-copy fast path  
 - **Tiered caching:** GPU memory → CPU DRAM → NVMe; policy-driven placement and eviction  
@@ -42,7 +42,7 @@ etcd --listen-client-urls http://localhost:2379 \
 
 ---
 
-## 🧪 API Overview (C++)
+## API Overview (C++)
 
 ```cpp
 // Existence
@@ -73,7 +73,7 @@ auto ps = keystone_service->batch_put_start(keys, sizes, config);
 
 ---
 
-## 📊 Monitoring & Health
+## Monitoring & Health
 
 ```bash
 # Prometheus metrics
@@ -98,7 +98,7 @@ Health signals:
 
 ---
 
-## 📦 Core Components
+## Core Components
 
 ### Keystone (control plane)
 - Object metadata & locations; worker liveness/status  
