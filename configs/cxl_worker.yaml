@@ -1,0 +1,130 @@
+# CXL-enabled Worker Configuration for Blackbird
+# This configuration demonstrates how to set up a worker with CXL-attached memory
+
+worker:
+  cluster_id: "blackbird_cluster"
+  node_id: "worker_cxl_node_1"
+  
+  # Network configuration
+  listen_address: "0.0.0.0:9092"
+  advertise_address: "192.168.1.101:9092"
+  
+  # Storage pools configuration with CXL tier
+  storage_pools:
+    # Traditional RAM pool (fast, limited capacity)
+    - pool_id: "ram_pool"
+      storage_class: "RAM_CPU"
+      capacity: 32_GB
+      path: ""
+    
+    # CXL Memory tier (balanced latency/capacity)
+    - pool_id: "cxl_memory_pool"
+      storage_class: "CXL_MEMORY"
+      capacity: 256_GB
+      config:
+        device_id: "cxl_mem0"
+        device_path: "/dev/cxl/mem0"
+        dax_device: "/dev/dax0.0"
+        interleave_granularity: 256
+        enable_numa_binding: true
+        numa_node: 1
+        enable_persistent_mode: false
+        cache_line_size: 64
+    
+    # CXL Type 2 Device (accelerator with memory)
+    - pool_id: "cxl_accelerator_pool"
+      storage_class: "CXL_TYPE2_DEVICE"
+      capacity: 128_GB
+      config:
+        device_id: "cxl_type2_0"
+        device_path: "/dev/cxl/mem1"
+        dax_device: "/dev/dax1.0"
+        interleave_granularity: 4096
+        enable_numa_binding: true
+        numa_node: 2
+        cache_line_size: 64
+    
+    # NVMe for larger, slower tier
+    - pool_id: "nvme_pool"
+      storage_class: "NVME"
+      capacity: 2_TB
+      path: "/mnt/nvme0/blackbird"
+  
+  # CXL Transport Configuration
+  transport:
+    type: "cxl_fabric"
+    protocol: "rdma_over_cxl"
+    
+    # CXL fabric settings
+    enable_fabric_manager: true
+    fabric_manager_endpoint: "localhost:8080"
+    enable_zero_copy: true
+    max_transfer_size: 4_GB
+    queue_depth: 128
+    
+    # Multi-path configuration with fallback
+    enable_multipath: true
+    fallback_transports:
+      - "ucx"
+      - "nvlink"
+      - "roce"
+    
+    # QoS settings
+    priority: 1
+    bandwidth_limit_gbps: 0  # unlimited
+    
+    # Hardware-specific features
+    enable_cxl_hdm: true
+    enable_cxl_switch: true
+    cxl_port_id: "cxl_port_0"
+  
+  # Allocation preferences
+  allocation:
+    # Prefer CXL memory for medium-sized objects
+    preferred_tiers:
+      - storage_class: "RAM_CPU"
+        min_size: 0
+        max_size: 10_MB
+      - storage_class: "CXL_MEMORY"
+        min_size: 10_MB
+        max_size: 1_GB
+      - storage_class: "CXL_TYPE2_DEVICE"
+        min_size: 100_MB
+        max_size: 10_GB
+      - storage_class: "NVME"
+        min_size: 1_GB
+        max_size: unlimited
+    
+    # Allocation strategy
+    enable_locality_awareness: true
+    prefer_contiguous: false
+    min_shard_size: 4096
+  
+  # High availability
+  replication_factor: 3
+  enable_auto_failover: true
+  
+  # Performance monitoring
+  metrics:
+    enable: true
+    port: 9093
+    export_interval_sec: 10
+    
+    # CXL-specific metrics
+    track_cxl_latency: true
+    track_cxl_bandwidth: true
+    track_interleave_efficiency: true
+  
+  # Etcd configuration
+  etcd:
+    endpoints: "localhost:2379"
+    heartbeat_interval_sec: 10
+    lease_ttl_sec: 30
+
+# Notes:
+# 1. CXL devices must be properly enumerated and accessible via /dev/cxl/*
+# 2. DAX devices (/dev/dax*) provide direct memory mapping for CXL memory
+# 3. NUMA binding helps optimize memory access patterns
+# 4. Interleave granularity affects performance for different workload patterns
+# 5. Multi-path configuration provides resilience and load balancing
+

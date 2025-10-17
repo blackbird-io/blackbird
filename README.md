@@ -11,7 +11,9 @@ GPU inference and training 4x fast. **Blackbird** is a **high-performance, multi
 ## ✨ Key Features
 
 - **RDMA-first performance:** UCX (RoCE/InfiniBand) with TCP fallback; zero-copy fast path  
-- **Tiered caching:** GPU memory → CPU DRAM → NVMe; policy-driven placement and eviction  
+- **CXL memory tier support:** Native support for CXL-attached memory as first-class storage tier  
+- **Pluggable interconnects:** Proxy over CXL, NVLink, RoCE, and direct RDMA based on deployment  
+- **Tiered caching:** GPU memory → CPU DRAM → CXL Memory → NVMe; policy-driven placement and eviction  
 - **High availability:** Keystone control-plane with leader election & failover (etcd)  
 - **Placement engine:** Topology-aware worker selection & load balancing  
 - **Batch APIs:** High-throughput batched puts/gets/exists  
@@ -175,6 +177,54 @@ auto ps = keystone_service->batch_put_start(keys, sizes, config);
 
 ---
 
+## 🔌 CXL Memory Tier Support
+
+Blackbird now supports **CXL (Compute Express Link)** attached memory as a first-class storage tier, enabling high-capacity, cache-coherent memory expansion for AI training and inference workloads.
+
+### Supported CXL Configurations
+
+- **CXL.mem**: Direct memory semantic access to CXL-attached volatile or persistent memory
+- **CXL Type 2 Devices**: Accelerators with integrated CXL memory (compute + memory)
+- **CXL Fabric**: Multi-device CXL topologies with switch/fabric support
+- **CXL.cache**: Cache-coherent protocol for reduced latency access
+
+### Transport Flexibility
+
+Blackbird's pluggable transport layer allows proxying over various interconnects:
+
+- **CXL** — Direct CXL.mem or RDMA over CXL fabric
+- **NVLink** — For GPU-attached CXL memory pools
+- **RoCE/InfiniBand** — Traditional RDMA transports
+- **UCX** — Unified communication framework with automatic fallback
+
+### CXL Integration Features
+
+- **DAX (Direct Access)** mapping for zero-copy CXL memory operations
+- **NUMA-aware placement** for optimal memory access patterns
+- **Interleaving support** (256B, 4KB granularities) for bandwidth optimization
+- **Multi-path resilience** with automatic fallback to UCX/NVLink/RoCE
+- **Cache line alignment** for efficient CXL memory access
+
+### Example Configuration
+
+```yaml
+# CXL Memory Pool Configuration
+storage_pools:
+  - pool_id: "cxl_memory_pool"
+    storage_class: "CXL_MEMORY"
+    capacity: 256_GB
+    config:
+      device_id: "cxl_mem0"
+      dax_device: "/dev/dax0.0"
+      numa_node: 1
+      interleave_granularity: 256
+      enable_persistent_mode: false
+```
+
+See [`configs/cxl_worker.yaml`](configs/cxl_worker.yaml) and [`examples/cxl_example.cpp`](examples/cxl_example.cpp) for complete examples.
+
+---
+
 ## 📊 Monitoring & Health
 
 ```bash
@@ -245,9 +295,17 @@ cd build && ctest --output-on-failure
 
 - [ ] **v0.1:** Keystone MVP, basic client SDK, Prometheus metrics  
 - [ ] **v0.2:** UCX client library GA, placement policies, benchmark suite  
-- [ ] **v0.3:** Tier managers (GPU/DRAM/NVMe) + compaction/defrag  
-- [ ] **v0.4:** Security (mTLS), ACLs, encryption-at-rest/in-flight  
+- [ ] **v0.3:** Tier managers (GPU/DRAM/CXL/NVMe) + compaction/defrag  
+- [ ] **v0.4:** CXL fabric manager integration, NVLink support for GPU pools  
+- [ ] **v0.5:** Security (mTLS), ACLs, encryption-at-rest/in-flight  
 - [ ] **v1.0:** Stability, perf tuning, operability hardening
+
+### Active Development
+
+- ✅ **CXL Memory Tier**: Basic CXL.mem support with DAX mapping
+- 🔄 **CXL Fabric**: Multi-device topology with switch support (in progress)
+- 🔄 **NVLink Integration**: GPU-to-CXL memory transfers (in progress)
+- 📝 **Persistent CXL**: CXL persistent memory mode support (planned)
 
 ---
 

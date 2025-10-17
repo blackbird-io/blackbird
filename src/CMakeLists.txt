@@ -9,6 +9,7 @@ set(BLACKBIRD_SOURCES
     worker/storage/ram_backend.cpp
     worker/storage/mmap_disk_backend.cpp
     worker/storage/iouring_disk_backend.cpp
+    worker/storage/cxl_memory_backend.cpp
     transport/ucx_engine.cpp
     common/error/error_codes.cpp
     common/types.cpp

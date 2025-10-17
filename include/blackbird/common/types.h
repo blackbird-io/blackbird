@@ -58,6 +58,10 @@ using UUID = std::pair<uint64_t, uint64_t>;
 using UcxAddress = std::vector<uint8_t>;  // UCX worker address
 using UcxRkey = uint64_t;                 // UCX remote key
 
+// CXL-specific types
+using CxlDeviceId = std::string;          // CXL device identifier
+using CxlMemoryRegionId = uint64_t;       // CXL memory region identifier
+
 // Etcd types
 using EtcdRevisionId = int64_t;
 using ViewVersionId = EtcdRevisionId;
@@ -79,6 +83,8 @@ enum class StorageClass : uint32_t {
 	STORAGE_UNSPECIFIED = 0,
 	RAM_CPU = 1,
 	RAM_GPU = 2, 
+	CXL_MEMORY = 6,          // CXL-attached memory tier
+	CXL_TYPE2_DEVICE = 7,    // CXL Type 2 accelerator with memory
 	NVME = 3,
 	SSD = 4,
 	HDD = 5,
@@ -113,9 +119,19 @@ struct FileLocation {
 };
 
 /**
+ * @brief CXL memory location for CXL.mem access
+ */
+struct CxlMemoryLocation {
+	CxlDeviceId device_id;
+	CxlMemoryRegionId region_id;
+	uint64_t offset;
+	uint64_t size;
+};
+
+/**
  * @brief Location detail using variant for type safety
  */
-using LocationDetail = std::variant<MemoryLocation, FileLocation>;
+using LocationDetail = std::variant<MemoryLocation, FileLocation, CxlMemoryLocation>;
 
 /**
  * @brief Shard placement information
