@@ -1,11 +1,13 @@
 #include "blackbird/worker/storage/ram_backend.h"
 #include "blackbird/worker/storage/iouring_disk_backend.h"
 #include "blackbird/worker/storage/mmap_disk_backend.h"
+#include "blackbird/worker/storage/cxl_memory_backend.h"
 
 #include <glog/logging.h>
 #include <algorithm>
 #include <sstream>
 #include <iomanip>
+#include <nlohmann/json.hpp>
 
 namespace blackbird {
 
@@ -264,8 +266,38 @@ std::unique_ptr<StorageBackend> create_storage_backend(StorageClass storage_clas
         case StorageClass::RAM_GPU:
             return std::make_unique<RamBackend>(capacity, storage_class);
         
+        case StorageClass::CXL_MEMORY:
+        case StorageClass::CXL_TYPE2_DEVICE: {
+            // Parse CXL configuration from JSON config string
+            CxlDeviceConfig cxl_config;
+            cxl_config.capacity = capacity;
+            
+            if (!config.empty()) {
+                try {
+                    auto json_config = nlohmann::json::parse(config);
+                    cxl_config.device_id = json_config.value("device_id", "cxl_device_0");
+                    cxl_config.device_path = json_config.value("device_path", "/dev/cxl/mem0");
+                    cxl_config.dax_device = json_config.value("dax_device", "");
+                    cxl_config.interleave_granularity = json_config.value("interleave_granularity", 256);
+                    cxl_config.enable_numa_binding = json_config.value("enable_numa_binding", true);
+                    cxl_config.numa_node = json_config.value("numa_node", -1);
+                    cxl_config.enable_persistent_mode = json_config.value("enable_persistent_mode", false);
+                    cxl_config.cache_line_size = json_config.value("cache_line_size", 64);
+                } catch (const std::exception& e) {
+                    LOG(WARNING) << "Failed to parse CXL config JSON, using defaults: " << e.what();
+                    cxl_config.device_id = "cxl_device_0";
+                    cxl_config.device_path = "/dev/cxl/mem0";
+                }
+            } else {
+                cxl_config.device_id = "cxl_device_0";
+                cxl_config.device_path = "/dev/cxl/mem0";
+            }
+            
+            return std::make_unique<CxlMemoryBackend>(cxl_config, storage_class);
+        }
+        
         default:
-            LOG(ERROR) << "RamBackend factory only supports RAM storage classes, got: " << static_cast<uint32_t>(storage_class);
+            LOG(ERROR) << "Storage backend factory does not support storage class: " << static_cast<uint32_t>(storage_class);
             return nullptr;
     }
 }

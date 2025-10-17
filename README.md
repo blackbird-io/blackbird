@@ -20,7 +20,9 @@ Blackbird draws inspiration from [Microsoft/FARM](https://www.microsoft.com/en-u
 ## Key Features
 
 - **RDMA-first performance:** UCX (RoCE/InfiniBand) with TCP fallback; zero-copy fast path  
-- **Tiered caching:** GPU memory → CPU DRAM → NVMe; policy-driven placement and eviction  
+- **CXL memory tier support:** Native support for CXL-attached memory as first-class storage tier  
+- **Pluggable interconnects:** Proxy over CXL, NVLink, RoCE, and direct RDMA based on deployment  
+- **Tiered caching:** GPU memory → CPU DRAM → CXL Memory → NVMe; policy-driven placement and eviction  
 - **High availability:** Keystone control-plane with leader election & failover (etcd)  
 - **Placement engine:** Topology-aware worker selection & load balancing  
 - **Batch APIs:** High-throughput batched puts/gets/exists  
@@ -145,9 +147,17 @@ cd build && ctest --output-on-failure
 
 - [ ] **v0.1:** Keystone MVP, basic client SDK, Prometheus metrics  
 - [ ] **v0.2:** UCX client library GA, placement policies, benchmark suite  
-- [ ] **v0.3:** Tier managers (GPU/DRAM/NVMe) + compaction/defrag  
-- [ ] **v0.4:** Security (mTLS), ACLs, encryption-at-rest/in-flight  
+- [ ] **v0.3:** Tier managers (GPU/DRAM/CXL/NVMe) + compaction/defrag  
+- [ ] **v0.4:** CXL fabric manager integration, NVLink support for GPU pools  
+- [ ] **v0.5:** Security (mTLS), ACLs, encryption-at-rest/in-flight  
 - [ ] **v1.0:** Stability, perf tuning, operability hardening
+
+### Active Development
+
+- ✅ **CXL Memory Tier**: Basic CXL.mem support with DAX mapping
+- 🔄 **CXL Fabric**: Multi-device topology with switch support (in progress)
+- 🔄 **NVLink Integration**: GPU-to-CXL memory transfers (in progress)
+- 📝 **Persistent CXL**: CXL persistent memory mode support (planned)
 
 ---
 
