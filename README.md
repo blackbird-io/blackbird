@@ -1,14 +1,23 @@
-# Blackbird: High-Performance RDMA based Distributed Storage System
+<br>
+<p align="center">
+  <img src="assets/logo.svg" alt="Blackbird Logo" width="2000"/>
+</p>
+<br>
 
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]() [![License: MIT](https://img.shields.io/badge/license-MIT-blue)]() [![C++20](https://img.shields.io/badge/language-C++20-lightgrey)]()
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]() [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue)]() [![C++20](https://img.shields.io/badge/language-C++20-lightgrey)]()
 
-GPU inference and training 4x fast. **Blackbird** is a **high-performance, multi-tiered distributed storage cache** for large-scale systems. It delivers **ultra-low latency** via UCX (RDMA), **intelligent tiering** across GPU/CPU/NVMe, and **automatic failover** with etcd.
+# Blackbird
+
+**A High-Performance RDMA based Distributed Storage System.**
+<br>
+
+Blackbird draws inspiration from [Microsoft/FARM](https://www.microsoft.com/en-us/research/project/farm/) and RDMA based KV store among other projects. It also takes cues from Redis for its simplicity and ubiquity. It delivers intelligent data placement, enabling applications to seamlessly offload data to a high-performance tiered system managing placement and latency for you.
 
 **Use cases:** HPC & ML training/inference pipelines, realtime analytics, feature stores, and metadata-heavy services where Redis/Memcached lack tiering or RDMA, and Alluxio is too heavyweight.
 
 ---
 
-## ✨ Key Features
+## Key Features
 
 - **RDMA-first performance:** UCX (RoCE/InfiniBand) with TCP fallback; zero-copy fast path  
 - **CXL memory tier support:** Native support for CXL-attached memory as first-class storage tier  
@@ -19,87 +28,6 @@ GPU inference and training 4x fast. **Blackbird** is a **high-performance, multi
 - **Batch APIs:** High-throughput batched puts/gets/exists  
 - **Observability:** Prometheus-style `/metrics`, health, and cluster stats
 
----
-
-## 🚀 Architecture
-
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Blackbird     │    │   Blackbird     │    │   Blackbird     │
-│   Client        │    │   Client        │    │   Client        │
-│                 │    │                 │    │                 │
-│ ┌─────────────┐ │    │ ┌─────────────┐ │    │ ┌─────────────┐ │
-│ │ UCX Memory  │ │    │ │ UCX Memory  │ │    │ │ UCX Memory  │ │
-│ │ Pool        │ │    │ │ Pool        │ │    │ │ Pool        │ │
-│ └─────────────┘ │    │ └─────────────┘ │    │ └─────────────┘ │
-└─────────┬───────┘    └─────────┬───────┘    └─────────┬───────┘
-          │                      │                      │
-          └───────────────┬──────┴───────────────┬──────┘
-                          │                      │
-                   ┌──────┴──────────────────────┴──────┐
-                   │            Keystone (HA)           │
-                   │  • Object Metadata Manager         │
-                   │  • Worker Placement Engine         │
-                   │  • Client Health Monitor           │
-                   │  • Garbage Collector               │
-                   └───────────────────┬────────────────┘
-                                       │
-                           ┌───────────┴────────────┐
-                           │       etcd Cluster     │
-                           │ • Discovery            │
-                           │ • Leader Election      │
-                           │ • Config Store         │
-                           └────────────────────────┘
-```
-
----
-
-## 📦 Core Components
-
-### Keystone (control plane)
-- Object metadata & locations; worker liveness/status  
-- Placement & load balancing; admission control  
-- Client/session tracking; automatic failure handling  
-- TTL/GC of objects; eviction coordination
-
-### Clients/Workers (data plane)
-- UCX endpoints; registered memory for RDMA  
-- Local tier managers (GPU/DRAM/NVMe) with pluggable policies  
-- Background compaction/defragmentation (future)
-
-### etcd Integration
-- Service discovery & registration  
-- Leader election for Keystone HA  
-- Distributed configuration and health registry
-
----
-
-## 🧭 Why Blackbird?
-
-- **Performance ceiling:** UCX+RDMA and zero-copy paths avoid kernel TCP overhead.  
-- **Cost & scale:** Tiering lets you mix fast/cheap media and still hit SLOs.  
-- **Simplicity:** Minimal control plane with well-defined APIs; easy to embed.
-
----
-
-## ⚡ Quick Start
-
-### Prerequisites
-- **C++20** compiler (GCC ≥10 or Clang ≥12)  
-- **CMake ≥3.20**  
-- **UCX ≥1.12**  
-- **etcd ≥3.4**  
-- Libraries: `glog`, `nlohmann/json`, [yaLanTingLibs](https://github.com/alibaba/yalantinglibs)
-
-### Build from Source
-```bash
-git clone https://github.com/blackbird-io/blackbird.git
-cd blackbird
-mkdir build && cd build
-cmake -DCMAKE_BUILD_TYPE=Release ..
-make -j"$(nproc)"
-sudo make install # optional
-```
 
 ### Run Example
 ```bash
@@ -116,37 +44,7 @@ etcd --listen-client-urls http://localhost:2379 \
 
 ---
 
-## ⚙️ Configuration
-
-### Keystone (JSON)
-```json
-{
-  "cluster_id": "blackbird_cluster",
-  "etcd_endpoints": "localhost:2379",
-  "listen_address": "0.0.0.0:9090",
-  "http_metrics_port": "9091",
-  "enable_gc": true,
-  "enable_ha": true,
-  "eviction_ratio": 0.1,
-  "high_watermark": 0.9,
-  "client_ttl_sec": 10
-}
-```
-
-### Client (JSON)
-```json
-{
-  "node_id": "client-001",
-  "keystone_address": "localhost:9090",
-  "local_address": "0.0.0.0:0",
-  "memory_pool_size": 1073741824,
-  "storage_path": "/tmp/blackbird"
-}
-```
-
----
-
-## 🧪 API Overview (C++)
+## API Overview (C++)
 
 ```cpp
 // Existence
@@ -177,55 +75,7 @@ auto ps = keystone_service->batch_put_start(keys, sizes, config);
 
 ---
 
-## 🔌 CXL Memory Tier Support
-
-Blackbird now supports **CXL (Compute Express Link)** attached memory as a first-class storage tier, enabling high-capacity, cache-coherent memory expansion for AI training and inference workloads.
-
-### Supported CXL Configurations
-
-- **CXL.mem**: Direct memory semantic access to CXL-attached volatile or persistent memory
-- **CXL Type 2 Devices**: Accelerators with integrated CXL memory (compute + memory)
-- **CXL Fabric**: Multi-device CXL topologies with switch/fabric support
-- **CXL.cache**: Cache-coherent protocol for reduced latency access
-
-### Transport Flexibility
-
-Blackbird's pluggable transport layer allows proxying over various interconnects:
-
-- **CXL** — Direct CXL.mem or RDMA over CXL fabric
-- **NVLink** — For GPU-attached CXL memory pools
-- **RoCE/InfiniBand** — Traditional RDMA transports
-- **UCX** — Unified communication framework with automatic fallback
-
-### CXL Integration Features
-
-- **DAX (Direct Access)** mapping for zero-copy CXL memory operations
-- **NUMA-aware placement** for optimal memory access patterns
-- **Interleaving support** (256B, 4KB granularities) for bandwidth optimization
-- **Multi-path resilience** with automatic fallback to UCX/NVLink/RoCE
-- **Cache line alignment** for efficient CXL memory access
-
-### Example Configuration
-
-```yaml
-# CXL Memory Pool Configuration
-storage_pools:
-  - pool_id: "cxl_memory_pool"
-    storage_class: "CXL_MEMORY"
-    capacity: 256_GB
-    config:
-      device_id: "cxl_mem0"
-      dax_device: "/dev/dax0.0"
-      numa_node: 1
-      interleave_granularity: 256
-      enable_persistent_mode: false
-```
-
-See [`configs/cxl_worker.yaml`](configs/cxl_worker.yaml) and [`examples/cxl_example.cpp`](examples/cxl_example.cpp) for complete examples.
-
----
-
-## 📊 Monitoring & Health
+## Monitoring & Health
 
 ```bash
 # Prometheus metrics
@@ -250,26 +100,41 @@ Health signals:
 
 ---
 
-## 🧱 Project Structure
+## Core Components
 
+### Keystone (control plane)
+- Object metadata & locations; worker liveness/status  
+- Placement & load balancing; admission control  
+- Client/session tracking; automatic failure handling  
+- TTL/GC of objects; eviction coordination
+
+### Clients/Workers (data plane)
+- UCX endpoints; registered memory for RDMA  
+- Local tier managers (GPU/DRAM/NVMe) with pluggable policies  
+- Background compaction/defragmentation (future)
+
+### etcd Integration
+- Service discovery & registration  
+- Leader election for Keystone HA  
+- Distributed configuration and health registry
+
+### Prerequisites
+- **C++20** compiler (GCC ≥10 or Clang ≥12)  
+- **CMake ≥3.20**  
+- **UCX ≥1.12**  
+- **etcd ≥3.4**  
+- Libraries: `glog`, `nlohmann/json`, [yaLanTingLibs](https://github.com/alibaba/yalantinglibs)
+
+### Build from Source
+```bash
+git clone https://github.com/blackbird-io/blackbird.git
+cd blackbird
+mkdir build && cd build
+cmake -DCMAKE_BUILD_TYPE=Release ..
+make -j"$(nproc)"
+sudo make install # optional
 ```
-Blackbird/
-├── include/Blackbird/          # Public headers
-│   ├── types.h                 # Core types & config
-│   ├── keystone_service.h      # Keystone control plane
-│   ├── rpc_service.h           # RPC service wrapper
-│   └── etcd_service.h          # etcd integration
-├── src/                        # Implementations
-│   ├── types.cpp
-│   ├── keystone_service.cpp
-│   ├── rpc_service.cpp
-│   ├── etcd_service.cpp
-│   └── error/                  # Error handling
-├── examples/                   # Usage examples
-│   └── setup_example.cpp
-├── proto/                      # Protocol buffer definitions
-└── CMakeLists.txt
-```
+
 
 ### Build & Run Tests
 ```bash
@@ -277,19 +142,6 @@ cmake -S . -B build -DBUILD_TESTS=ON
 cmake --build build -j"$(nproc)"
 cd build && ctest --output-on-failure
 ```
-
----
-
-## 📈 Performance (early)
-
-- **Latency:** sub-microsecond fast path (RDMA)  
-- **Throughput:** scales with network bandwidth & NICs  
-- **Scalability:** 100+ nodes (Keystone HA via etcd)  
-- **CPU:** minimal due to RDMA offload & zero-copy
-
-> Benchmarks & reproducible harness: coming with v0.2 (see Roadmap).
-
----
 
 ## 🔭 Roadmap
 
@@ -319,24 +171,13 @@ cd build && ctest --output-on-failure
 | High Availability  | ✅        | ✅            | ❌        | ✅       |
 | Language           | C++20     | C             | C         | Java/Scala |
 
----
-
-## 🛡 Security & Production Notes
-
-- **Status:** Alpha; APIs subject to change prior to v1.0  
-- **Networking:** Prefer RoCEv2/IB; fallback TCP supported  
-- **Auth:** mTLS & ACLs planned (see Roadmap v0.4)  
-- **Data at rest:** Per-tier encryption planned; verify filesystem/NVMe settings
-
----
-
 ## 🤝 Contributing
 
 We welcome issues and PRs.
 
 1. Fork the repo  
 2. Create a branch: `git checkout -b feature/awesome`  
-3. Add tests & docs  
+3. Add your feature.
 4. `clang-format`/`cppcheck` if available  
 5. Open a PR
 
@@ -346,4 +187,4 @@ See `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` (coming soon).
 
 ## 📜 License
 
-MIT — see [LICENSE](LICENSE).
+Apache - see [LICENSE](LICENSE).
