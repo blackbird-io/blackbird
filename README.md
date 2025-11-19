@@ -1,6 +1,5 @@
 <br>
 <p align="center">
-  <img src="assets/logo.svg" alt="Blackbird Logo" width="2000"/>
 </p>
 <br>
 
