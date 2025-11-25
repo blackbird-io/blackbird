@@ -144,11 +144,11 @@ cd build && ctest --output-on-failure
 
 ## 🔭 Roadmap
 
-- [ ] **v0.1:** Keystone MVP, basic client SDK, Prometheus metrics  
-- [ ] **v0.2:** UCX client library GA, placement policies, benchmark suite  
-- [ ] **v0.3:** Tier managers (GPU/DRAM/CXL/NVMe) + compaction/defrag  
-- [ ] **v0.4:** CXL fabric manager integration, NVLink support for GPU pools  
-- [ ] **v0.5:** Security (mTLS), ACLs, encryption-at-rest/in-flight  
+- [X] **v0.1:** Keystone MVP, basic client SDK, Prometheus metrics  
+- [X] **v0.2:** UCX client library GA, placement policies, benchmark suite  
+- [X] **v0.3:** Tier managers (GPU/DRAM/CXL/NVMe) + compaction/defrag  
+- [X] **v0.4:** CXL fabric manager integration, NVLink support for GPU pools  
+- [ ] **v0.5:** Object Storage Support.
 - [ ] **v1.0:** Stability, perf tuning, operability hardening
 
 ### Active Development
